@@ -1,0 +1,19 @@
+"""API 出参 DTO。"""
+
+from datetime import datetime
+
+from pydantic import BaseModel
+
+
+class QuestionOut(BaseModel):
+    id: int
+    user_id: int
+    client_question_id: str
+    image_url: str
+    status: str  # pending / answered / failed
+    answer: str | None = None
+    meta: dict | None = None  # 搭车打标结果（answer 之外的结构化输出）
+    error_msg: str | None = None
+    duplicated: bool = False  # True = 幂等命中，返回的是已有记录
+    created_at: datetime
+    answered_at: datetime | None = None
