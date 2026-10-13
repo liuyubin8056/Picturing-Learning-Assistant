@@ -39,6 +39,10 @@ class Question(SQLModel, table=True):
     status: str = Field(default="pending", index=True)  # pending / answered / failed
     answer: str | None = None  # 答疑正文
     meta_json: str | None = None  # 搭车打标原始 JSON（二期消费）
+    # 学生互动反馈：答疑时模型预生成的错因候选 + 用户提交结果
+    feedback_options: str | None = None
+    feedback_result: str | None = None
+    feedback_at: datetime | None = None
     error_msg: str | None = None
     created_at: datetime = Field(default_factory=utcnow, index=True)
     answered_at: datetime | None = None
@@ -87,6 +91,9 @@ class KBProblem(SQLModel, table=True):
     difficulty: int | None = None  # 1 基础 / 2 中等 / 3 挑战
     error_tags: str | None = None  # 错因标签 JSON 数组
     is_objective: bool = Field(default=False, index=True)  # 是否可自动判分
+    feedback_options: str | None = None  # 答疑时模型预生成的错因候选（JSON，含 tag/label/weight）
+    feedback_result: str | None = None  # 用户反馈结果（JSON：selected/custom）
+    feedback_at: datetime | None = None  # 反馈时间
     source_page: int | None = Field(default=None, index=True)  # PDF 物理页
     book_page: int | None = None  # 书内页码（页脚）
     page_image_path: str | None = None  # 整页图
@@ -98,3 +105,47 @@ class KBProblem(SQLModel, table=True):
     review_note: str | None = None  # 校对备注
     reviewed_at: datetime | None = None  # 校对时间
     created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class Mastery(SQLModel, table=True):
+    """用户 × 知识点的掌握度（个性化画像的数据底座）。
+
+    信号来源：
+    1. 答疑反馈（主信号）：用户自报错因，权重按 err_weights 加权
+    2. 自测判分（确定性信号）：客观题直接判分，主观题按用户自评
+    3. 答疑行为（弱信号）：仅拍照提问、未反馈也计入一次弱求助
+
+    score 为掌握度 0~1（EMA 更新）；薄弱度由 profile_service 依据
+    错误率 / 错因权重 / 时间衰减实时计算，不落库。
+    """
+
+    __tablename__ = "mastery"
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    kp_id: int = Field(foreign_key="knowledge_points.id", index=True)
+    score: float = Field(default=0.0)  # 掌握度 0~1
+    ask_count: int = Field(default=0)  # 拍照求助次数
+    wrong_count: int = Field(default=0)  # 自测做错次数
+    right_count: int = Field(default=0)  # 自测做对次数
+    feedback_count: int = Field(default=0)  # 提交反馈的次数
+    error_tags: str | None = None  # 错因累计（JSON：{tag: 次数}）
+    custom_notes: str | None = None  # 用户自定义反馈原文（JSON 数组，最多保留 10 条）
+    last_active_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class ProfileMeta(SQLModel, table=True):
+    """画像元信息（md 文件本体存backend/profiles/{user_id}.md）。"""
+
+    __tablename__ = "profile_meta"
+
+    user_id: int = Field(primary_key=True)
+    md_path: str | None = None  # md 文件相对路径
+    weak_kp_ids: str | None = None  # 薄弱知识点 id（JSON 数组，按薄弱度降序）
+    strong_kp_ids: str | None = None  # 优势知识点 id（JSON 数组）
+    radar: str | None = None  # 雷达图数据（JSON：按章聚合的平均掌握度）
+    signal_count: int = Field(default=0)  # 累计信号数（答疑反馈 + 自测结果）
+    updated_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utcnow)

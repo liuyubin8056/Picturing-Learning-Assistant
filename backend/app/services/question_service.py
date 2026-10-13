@@ -82,12 +82,32 @@ class QuestionService:
 
         try:
             result = await self.llm.ask_with_image(image_bytes)
+            if result.meta and isinstance(result.meta.get("difficulty"), (int, float)):
+                # 模型偶尔给出 4/5，统一裁剪到约定的 1~3
+                result.meta["difficulty"] = max(
+                    1, min(3, int(round(result.meta["difficulty"])))
+                )
             question.answer = result.answer
             question.meta_json = (
                 json.dumps(result.meta, ensure_ascii=False) if result.meta else None
             )
+            # 预生成的学生反馈候选选项（供前端渲染多选+自定义）
+            if result.meta:
+                opts = result.meta.get("feedback_options")
+                if isinstance(opts, list) and opts:
+                    question.feedback_options = json.dumps(opts, ensure_ascii=False)
             question.status = "answered"
             question.answered_at = _utcnow()
+            self.session.add(question)
+            self.session.commit()
+            self.session.refresh(question)
+
+            # 弱信号入账：拍照求助本身计入（错因中性，等用户反馈后再修正）
+            if question.feedback_options:
+                from . import profile_service as _ps
+
+                _ps.record_ask(self.session, question.user_id, question)
+                self.session.commit()
         except LLMNotConfiguredError:
             question.status = "failed"
             question.error_msg = "DEEPSEEK_API_KEY 未配置"

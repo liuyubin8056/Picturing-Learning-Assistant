@@ -28,6 +28,11 @@ _LIGHT_MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("review_note", "TEXT"),
         ("reviewed_at", "DATETIME"),
     ],
+    "questions": [
+        ("feedback_options", "TEXT"),
+        ("feedback_result", "TEXT"),
+        ("feedback_at", "DATETIME"),
+    ],
 }
 
 
