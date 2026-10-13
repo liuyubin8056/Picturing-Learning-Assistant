@@ -12,6 +12,14 @@
 # 放行后端项目目录
 !/backend/
 
+# ---------- 知识库构建产物（脚本可重新生成，不入库）----------
+backend/_kb_out/
+backend/kb_images/
+backend/scripts/kb/__pycache__/
+
+# ---------- 队友前端演示 demo（独立目录，不入库）----------
+高数拍搜/
+
 # ---------- backend 忽略规则（由原 backend/.gitignore 迁入，路径已加前缀）----------
 backend/.venv/
 backend/.pytest_cache/

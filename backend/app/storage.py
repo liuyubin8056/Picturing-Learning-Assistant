@@ -36,4 +36,4 @@ class LocalStorage(StorageBackend):
 
 
 def get_storage() -> LocalStorage:
-    return LocalStorage(get_settings().upload_dir)
+    return LocalStorage(str(get_settings().upload_path))
