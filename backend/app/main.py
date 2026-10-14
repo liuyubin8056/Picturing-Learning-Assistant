@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .db import init_db
-from .routers import health, kb, profile, questions
+from .routers import diagnose, health, kb, profile, questions, tests, tokens
 from .storage import get_storage
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -32,6 +32,10 @@ app.include_router(health.router)
 app.include_router(questions.router)
 app.include_router(kb.router)
 app.include_router(profile.router)
+app.include_router(diagnose.router)   # D 诊断报告
+app.include_router(tests.router)       # E 自测练习
+app.include_router(tests.wb_router)   # F 错题本
+app.include_router(tokens.router)     # token 计量
 
 # 题目图片静态服务（MVP 本地存储；get_storage 构造时确保目录存在）
 _storage = get_storage()

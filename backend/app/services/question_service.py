@@ -107,7 +107,23 @@ class QuestionService:
                 from . import profile_service as _ps
 
                 _ps.record_ask(self.session, question.user_id, question)
-                self.session.commit()
+
+            # token 计量（答疑是主要开销场景，必须落库才能度量与优化）
+            from .token_service import record_usage
+
+            u = result.usage or {}
+            record_usage(
+                self.session,
+                user_id=question.user_id,
+                scene="qa",
+                model=self.llm.model,
+                prompt_tokens=u.get("prompt_tokens", 0),
+                completion_tokens=u.get("completion_tokens", 0),
+                reasoning_tokens=u.get("reasoning_tokens", 0),
+                cache_hit_tokens=u.get("cache_hit_tokens", 0),
+                cache_miss_tokens=u.get("cache_miss_tokens", 0),
+            )
+            self.session.commit()
         except LLMNotConfiguredError:
             question.status = "failed"
             question.error_msg = "DEEPSEEK_API_KEY 未配置"

@@ -58,6 +58,7 @@ class LLMResult:
         self.answer = answer
         self.meta = meta
         self.raw = raw
+        self.usage: dict = {}  # token 计量，由 _post 填充
 
 
 _HEXDIGITS = set("0123456789abcdefABCDEF")
@@ -231,9 +232,27 @@ def extract_content(data: dict) -> str:
     return content
 
 
+def extract_usage(data: dict) -> dict:
+    """从响应中提取 token 计量（缺失字段补 0）。"""
+    u = data.get("usage") or {}
+    details = u.get("completion_tokens_details") or {}
+    return {
+        "prompt_tokens": int(u.get("prompt_tokens") or 0),
+        "completion_tokens": int(u.get("completion_tokens") or 0),
+        "reasoning_tokens": int(details.get("reasoning_tokens") or 0),
+        "total_tokens": int(u.get("total_tokens") or 0),
+        "cache_hit_tokens": int(u.get("prompt_cache_hit_tokens") or 0),
+        "cache_miss_tokens": int(u.get("prompt_cache_miss_tokens") or 0),
+    }
+
+
 class DeepSeekClient:
     def __init__(self, settings: Settings):
         self._s = settings
+
+    @property
+    def model(self) -> str:
+        return self._s.deepseek_model
 
     def _parse(self, raw: str) -> LLMResult:
         """解析模型输出；解析失败时降级为纯文本 answer（meta 为空）。"""
@@ -246,14 +265,32 @@ class DeepSeekClient:
             answer=answer, meta=meta if isinstance(meta, dict) else None, raw=raw
         )
 
-    async def ask_with_image(
-        self, image_bytes: bytes, mime: str = "image/jpeg"
-    ) -> LLMResult:
+    async def _post(self, payload: dict) -> tuple[str, dict]:
+        """统一发请求，返回 (正文, usage)。"""
         if not self._s.llm_configured:
             raise LLMNotConfiguredError(
                 "DEEPSEEK_API_KEY 未配置，请在 backend/.env 中填入后重启服务"
             )
+        headers = {"Authorization": f"Bearer {self._s.deepseek_api_key}"}
+        url = f"{self._s.deepseek_base_url.rstrip('/')}/chat/completions"
+        try:
+            async with httpx.AsyncClient(timeout=self._s.deepseek_timeout) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+        except httpx.HTTPError as e:
+            raise LLMCallError(f"调用大模型失败：{e}") from e
 
+        if resp.status_code != 200:
+            raise LLMCallError(f"大模型返回 {resp.status_code}：{resp.text[:300]}")
+        try:
+            data = resp.json()
+        except ValueError as e:
+            raise LLMCallError(f"大模型响应非 JSON：{resp.text[:300]}") from e
+        return extract_content(data), extract_usage(data)
+
+    async def ask_with_image(
+        self, image_bytes: bytes, mime: str = "image/jpeg"
+    ) -> LLMResult:
+        """答疑（多模态）：答疑 + 打标 + 反馈候选同一次调用。"""
         b64 = base64.b64encode(image_bytes).decode()
         payload = {
             "model": self._s.deepseek_model,
@@ -273,28 +310,36 @@ class DeepSeekClient:
             "temperature": 0.2,
             "max_tokens": self._s.deepseek_max_tokens,
         }
-        headers = {"Authorization": f"Bearer {self._s.deepseek_api_key}"}
-        url = f"{self._s.deepseek_base_url.rstrip('/')}/chat/completions"
-
-        try:
-            async with httpx.AsyncClient(timeout=self._s.deepseek_timeout) as client:
-                resp = await client.post(url, json=payload, headers=headers)
-        except httpx.HTTPError as e:
-            raise LLMCallError(f"调用大模型失败：{e}") from e
-
-        if resp.status_code != 200:
-            raise LLMCallError(
-                f"大模型返回 {resp.status_code}：{resp.text[:300]}"
-            )
-
-        try:
-            data = resp.json()
-        except ValueError as e:
-            raise LLMCallError(f"大模型响应非 JSON：{resp.text[:300]}") from e
-
-        raw = extract_content(data)
+        raw, usage = await self._post(payload)
         result = self._parse(raw)
         if not result.answer.strip():
             # 双保险：extract_content 已拦空正文，此处防解析层意外丢内容
             raise LLMCallError("模型正文解析结果为空")
+        result.usage = usage
+        return result
+
+    async def ask_text(
+        self,
+        system: str,
+        user: str,
+        max_tokens: int | None = None,
+        temperature: float = 0.3,
+    ) -> LLMResult:
+        """纯文本调用（诊断报告撰写、题目详解生成）。
+
+        system 放稳定内容、user 放每次变化的内容：前缀一致可命中服务端缓存，
+        画像摘要应放在 system 末尾以最大化缓存复用（见 docs/token优化论证.md）。
+        """
+        payload = {
+            "model": self._s.deepseek_model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": temperature,
+            "max_tokens": max_tokens or self._s.deepseek_max_tokens,
+        }
+        raw, usage = await self._post(payload)
+        result = LLMResult(answer=raw.strip(), meta=None, raw=raw)
+        result.usage = usage
         return result

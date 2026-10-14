@@ -91,9 +91,6 @@ class KBProblem(SQLModel, table=True):
     difficulty: int | None = None  # 1 基础 / 2 中等 / 3 挑战
     error_tags: str | None = None  # 错因标签 JSON 数组
     is_objective: bool = Field(default=False, index=True)  # 是否可自动判分
-    feedback_options: str | None = None  # 答疑时模型预生成的错因候选（JSON，含 tag/label/weight）
-    feedback_result: str | None = None  # 用户反馈结果（JSON：selected/custom）
-    feedback_at: datetime | None = None  # 反馈时间
     source_page: int | None = Field(default=None, index=True)  # PDF 物理页
     book_page: int | None = None  # 书内页码（页脚）
     page_image_path: str | None = None  # 整页图
@@ -149,3 +146,112 @@ class ProfileMeta(SQLModel, table=True):
     signal_count: int = Field(default=0)  # 累计信号数（答疑反馈 + 自测结果）
     updated_at: datetime | None = None
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class DiagnosisReport(SQLModel, table=True):
+    """诊断报告（D 模块）：规则算分 + LLM 撰写，每次生成一个版本可对比。"""
+
+    __tablename__ = "diagnosis_reports"
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    version: int = Field(index=True)  # 第几次生成（从 1 递增）
+    prev_version: int | None = None  # 上一版本号
+    title: str | None = None
+    content_md: str | None = None  # 报告正文（含证据引用）
+    weak_kp_ids: str | None = None  # 本次薄弱知识点（JSON）
+    strong_kp_ids: str | None = None
+    radar_json: str | None = None  # 生成时的雷达图快照（用于版本对比）
+    evidence_json: str | None = None  # 证据引用（JSON：关联的答疑/题库原题）
+    signal_count: int = Field(default=0)  # 生成时的信号量
+    confidence: float = Field(default=0.0)  # 置信度 0~1（样本不足时低）
+    token_used: int = Field(default=0)  # 生成本报告消耗的 completion token
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class TestSession(SQLModel, table=True):
+    """自测会话（E 模块）。"""
+
+    __tablename__ = "test_sessions"
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    title: str | None = None
+    purpose: str = Field(default="weakness", index=True)  # weakness 薄弱点 / review 复习 / chapter 章节
+    kp_ids: str | None = None  # 覆盖知识点（JSON 数组）
+    total_count: int = Field(default=0)
+    right_count: int = Field(default=0)
+    wrong_count: int = Field(default=0)
+    score: float = Field(default=0.0)  # 得分率 0~1
+    status: str = Field(default="pending", index=True)  # pending 待作答 / submitted 已提交
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    submitted_at: datetime | None = None
+
+
+class TestQuestion(SQLModel, table=True):
+    """自测题目（快照题面，作答与判分都在此行）。"""
+
+    __tablename__ = "test_questions"
+
+    id: int | None = Field(default=None, primary_key=True)
+    session_id: int = Field(foreign_key="test_sessions.id", index=True)
+    kb_problem_id: int | None = Field(default=None, index=True)
+    order_no: int = Field(default=0)
+    # 快照（防止题库改动影响历史记录）
+    stem: str | None = None
+    options: str | None = None
+    answer: str | None = None
+    solution: str | None = None  # 库内解析（主观题判错后直接给）
+    image_path: str | None = None
+    kp_ids: str | None = None
+    question_type: str | None = None
+    is_objective: bool = Field(default=False, index=True)
+    difficulty: int | None = None
+    # 作答与判分
+    user_answer: str | None = None
+    is_correct: bool | None = None  # 客观题程序判、主观题用户自评
+    judged_by: str | None = None  # auto / self
+    answered_at: datetime | None = None
+
+
+class WrongBook(SQLModel, table=True):
+    """错题本（F 模块）。来源：答疑未解决 + 自测错题。"""
+
+    __tablename__ = "wrong_books"
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    source: str = Field(default="test", index=True)  # qa 答疑 / test 自测
+    question_id: int | None = Field(default=None, index=True)  # questions.id
+    kb_problem_id: int | None = Field(default=None, index=True)  # kb_problems.id
+    test_question_id: int | None = Field(default=None, index=True)
+    kp_ids: str | None = None  # 关联知识点（JSON）
+    stem: str | None = None  # 题干快照
+    image_path: str | None = None
+    answer: str | None = None
+    solution: str | None = None
+    error_tags: str | None = None  # 错因标签（JSON 数组）
+    status: str = Field(default="pending", index=True)  # pending 待攻克 / mastered 已掌握
+    wrong_count: int = Field(default=1)  # 累计做错次数
+    last_wrong_at: datetime | None = None
+    mastered_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class TokenUsage(SQLModel, table=True):
+    """Token 计量（按场景记录，用于成本核算与优化验证）。"""
+
+    __tablename__ = "token_usage"
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int | None = Field(default=None, index=True)
+    scene: str = Field(index=True)  # qa 答疑 / diagnose 诊断 / test_explain 详解 / context_probe
+    model: str | None = None
+    prompt_tokens: int = Field(default=0)
+    completion_tokens: int = Field(default=0)
+    reasoning_tokens: int = Field(default=0)
+    total_tokens: int = Field(default=0)
+    cache_hit_tokens: int = Field(default=0)
+    cache_miss_tokens: int = Field(default=0)
+    latency_ms: int = Field(default=0)
+    created_at: datetime = Field(default_factory=utcnow, index=True)

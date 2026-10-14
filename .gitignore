@@ -1,38 +1,79 @@
 # ============================================================
 # 工作区根 .gitignore
-# 策略：默认忽略全部顶层内容，仅跟踪后端项目 backend/
+#
+# 策略：默认忽略全部顶层内容（/*），仅白名单放行 backend/ 与本文件
+# 分类：① 顶层策略  ② 依赖与环境  ③ 运行时数据与产物
+#       ④ Python 缓存与构建  ⑤ 日志与临时文件  ⑥ IDE/系统  ⑦ 项目特定
+# 注意：gitignore 不支持行内注释，# 必须独占一行
 # ============================================================
 
-# 忽略所有顶层条目（文件夹与文件）
+# ---------- ① 顶层策略：默认全忽略，白名单放行 ----------
 /*
-
-# 放行本文件自身（否则 /* 会把 .gitignore 也忽略掉，规则无法随仓库分发）
 !.gitignore
-
-# 放行后端项目目录
+!.gitattributes
 !/backend/
+# 说明：以下顶层内容由 /* 覆盖，无需单独写规则——
+#   docs/ 设计文档、.workbuddy/ 项目记忆、_pdf_probe/ 探查产物、
+#   教材 PDF、高数拍搜/ 队友 demo（⑦ 另有显式规则便于检索）
+#   如需入库，请显式添加 "!路径" 放行
 
-# ---------- 知识库构建产物（脚本可重新生成，不入库）----------
-backend/_kb_out/
-backend/kb_images/
-backend/scripts/kb/__pycache__/
-
-# ---------- 队友前端演示 demo（独立目录，不入库）----------
-高数拍搜/
-
-# ---------- backend 忽略规则（由原 backend/.gitignore 迁入，路径已加前缀）----------
+# ---------- ② 依赖、环境变量与密钥 ----------
+# Python 虚拟环境（依赖包目录，勿入库）
 backend/.venv/
-backend/.pytest_cache/
-backend/__pycache__/
-backend/*.pyc
+backend/venv/
+# 真实密钥（DEEPSEEK_API_KEY 等），严禁入库
 backend/.env
+# 环境变量变体（.env.local / .env.prod 等）
+backend/.env.*
+# 模板必须入库：放行规则须写在忽略规则之后
+!backend/.env.example
+
+# ---------- ③ 运行时数据与构建产物 ----------
+# 开发/测试 SQLite 库（运行时生成）
 backend/dev.db
 backend/test_dev.db
-backend/smoke.png
+backend/*.db
+# 用户上传的题目图片（运行时数据）
 backend/uploads/*
 !backend/uploads/.gitkeep
+# 用户画像 md（运行时生成，含真实用户数据）
+backend/profiles/*
+!backend/profiles/.gitkeep
+# 知识库构建中间产物（脚本可重新生成）
+backend/_kb_out/
+backend/kb_images/
+# 冒烟测试临时图片
+backend/smoke.png
 
-# ---------- 通用 Python 忽略（兜底）----------
+# ---------- ④ Python 缓存与构建 ----------
+# 任意层级的字节码缓存
 __pycache__/
 *.py[cod]
+*.egg-info/
+build/
+dist/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+# 知识库脚本缓存（冗余保护，便于定位）
+backend/scripts/kb/__pycache__/
+
+# ---------- ⑤ 日志与临时文件 ----------
+*.log
+logs/
+*.tmp
+*.bak
+*~
+
+# ---------- ⑥ IDE / 编辑器 / 操作系统 ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- ⑦ 项目特定 ----------
+# 队友前端演示 demo（独立目录，不入库）
+高数拍搜/

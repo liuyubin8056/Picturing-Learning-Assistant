@@ -30,10 +30,14 @@ def client():
     SQLModel.metadata.create_all(engine)
     with TestClient(app) as c:
         yield c
-    # 先释放连接再清理产物（否则 SQLite 文件被占用删不掉）
+    # 先释放连接再清理产物（Windows 上 SQLite 文件锁释放有延迟，删不掉可留到下次，
+    # drop_all + create_all 已保证测试间隔离）
     engine.dispose()
     for p in BACKEND_DIR.glob("test_dev.db*"):
-        p.unlink(missing_ok=True)
+        try:
+            p.unlink(missing_ok=True)
+        except OSError:
+            pass
     shutil.rmtree(BACKEND_DIR / "test_uploads", ignore_errors=True)
 
 
