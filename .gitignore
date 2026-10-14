@@ -12,6 +12,7 @@
 !.gitignore
 !.gitattributes
 !/backend/
+!/frontend/
 # 说明：以下顶层内容由 /* 覆盖，无需单独写规则——
 #   docs/ 设计文档、.workbuddy/ 项目记忆、_pdf_probe/ 探查产物、
 #   教材 PDF、高数拍搜/ 队友 demo（⑦ 另有显式规则便于检索）
@@ -77,3 +78,13 @@ desktop.ini
 # ---------- ⑦ 项目特定 ----------
 # 队友前端演示 demo（独立目录，不入库）
 高数拍搜/
+
+# ---------- ⑧ 前端（frontend/）----------
+# 依赖包目录（体积大，npm install 可重建）
+frontend/node_modules/
+# 构建产物（npm run build 可重建）
+frontend/dist/
+# Vite 缓存与本地覆盖配置
+frontend/.vite/
+frontend/*.local
+# 注意：package-lock.json 必须入库（锁定依赖版本），不要忽略
