@@ -8,13 +8,60 @@ import MarkdownView from '../components/MarkdownView.vue'
 const loading = ref(true)
 const radar = ref({ axes: [], weak_points: [], signal_count: 0 })
 const profileMd = ref('')
+const stats = ref([])            // 每个知识点：kp_name / chapter / score / weak
 const report = ref(null)
 const reportList = ref([])
 const genBusy = ref(false)
 const error = ref('')
 
+// 雷达下钻：选中章节 → 该章节的知识点小雷达
+const selectedChapter = ref('')
+
 const weakPoints = computed(() => radar.value.weak_points || [])
 const hasSignal = computed(() => (radar.value.signal_count || 0) > 0)
+
+// 按章节聚合知识点（小雷达数据源）
+const chapterStats = computed(() => {
+  const map = {}
+  for (const s of stats.value) {
+    const ch = s.chapter || '未分类'
+    ;(map[ch] ||= []).push(s)
+  }
+  return map
+})
+
+const chapterList = computed(() =>
+  Object.entries(chapterStats.value).map(([name, items]) => ({
+    name,
+    count: items.length,
+    avg: items.reduce((a, b) => a + b.score, 0) / items.length,
+    weak: items.filter((i) => i.weak >= 0.35).length,
+  })).sort((a, b) => b.avg - a.avg)
+)
+
+const subAxes = computed(() => {
+  if (!selectedChapter.value) return []
+  return (chapterStats.value[selectedChapter.value] || []).map((s) => ({
+    axis: s.kp_name,
+    value: s.score,
+    kp_count: 1,
+  }))
+})
+
+const subList = computed(() => {
+  if (!selectedChapter.value) return []
+  return [...(chapterStats.value[selectedChapter.value] || [])].sort((a, b) => b.weak - a.weak)
+})
+
+// 全书章节数 vs 已练习章节数（用于提示"还有几章未开始"）
+const unpracticedCount = computed(() =>
+  (radar.value.axes || []).filter((a) => a.practiced === false).length
+)
+
+function drill(i) {
+  const ch = radar.value.axes[i]?.axis
+  if (ch) selectedChapter.value = selectedChapter.value === ch ? '' : ch
+}
 
 onMounted(load)
 
@@ -24,6 +71,7 @@ async function load() {
   try {
     const [p, r] = await Promise.all([getProfile(userId.value), getRadar(userId.value)])
     profileMd.value = p.markdown || ''
+    stats.value = p.stats || []
     radar.value = r
     try {
       report.value = await getLatestDiagnose(userId.value)
@@ -48,6 +96,10 @@ async function genReport(useLlm) {
     genBusy.value = false
   }
 }
+
+function scoreColor(v) {
+  return v >= 0.7 ? 'var(--ok)' : v >= 0.45 ? 'var(--warn)' : 'var(--err)'
+}
 </script>
 
 <template>
@@ -60,7 +112,6 @@ async function genReport(useLlm) {
     </div>
 
     <template v-else>
-      <!-- 空态引导 -->
       <div v-if="!hasSignal" class="card">
         <h2>📊 学习诊断</h2>
         <div class="banner warn">
@@ -69,13 +120,71 @@ async function genReport(useLlm) {
       </div>
 
       <template v-else>
-        <!-- 雷达图 -->
+        <!-- 大雷达：各章总体掌握度 -->
         <div class="card">
-          <h2>掌握度雷达（各章平均）</h2>
-          <RadarChart :axes="radar.axes || []" />
+          <h2>掌握度总览（按章节）</h2>
+          <RadarChart :axes="radar.axes || []" interactive @select="drill" />
           <p class="muted" style="text-align: center; margin-bottom: 0">
-            共 {{ radar.signal_count }} 条学习信号 · 覆盖 {{ (radar.axes || []).length }} 个章节
+            共 {{ radar.signal_count }} 条学习信号 · {{ (radar.axes || []).length }} 个章节 ·
+            <span style="color: var(--brand)">点击章节名查看该章知识点</span>
           </p>
+        </div>
+
+        <!-- 章节列表（点选下钻） -->
+        <div class="card">
+          <h2>章节明细</h2>
+          <div
+            v-for="c in chapterList"
+            :key="c.name"
+            class="chapter-row"
+            :class="{ on: selectedChapter === c.name }"
+            @click="selectedChapter = selectedChapter === c.name ? '' : c.name"
+          >
+            <div style="flex: 1">
+              <b style="font-size: 14px">{{ c.name }}</b>
+              <div class="muted" style="font-size: 12px">
+                {{ c.count }} 个知识点
+                <template v-if="c.weak"> · <span style="color: var(--err)">薄弱 {{ c.weak }}</span></template>
+              </div>
+            </div>
+            <span class="tag" :style="{ color: scoreColor(c.avg), borderColor: scoreColor(c.avg) }">
+              {{ c.avg.toFixed(2) }}
+            </span>
+            <span class="chev">{{ selectedChapter === c.name ? '▾' : '›' }}</span>
+          </div>
+          <p v-if="unpracticedCount" class="muted" style="font-size: 12px; margin: 8px 0 0">
+            另有 {{ unpracticedCount }} 个章节尚未学习（雷达图上显示为 0，可点击查看）
+          </p>
+        </div>
+
+        <!-- 小雷达：选中章节的知识点掌握度 -->
+        <div v-if="selectedChapter" class="card">
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px">
+            <h2 style="margin: 0; flex: 1">{{ selectedChapter }}</h2>
+            <button class="btn ghost" @click="selectedChapter = ''">收起</button>
+          </div>
+          <template v-if="subAxes.length">
+            <RadarChart :axes="subAxes" :max-width="340" />
+            <div style="margin-top: 6px">
+              <div
+                v-for="s in subList"
+                :key="s.kp_id"
+                style="display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line)"
+              >
+                <span style="flex: 1; font-size: 13.5px">{{ s.kp_name }}</span>
+                <span class="tag" :style="{ color: scoreColor(s.score), borderColor: scoreColor(s.score) }">
+                  掌握 {{ s.score.toFixed(2) }}
+                </span>
+                <span v-if="s.weak >= 0.35" class="tag err">薄弱 {{ s.weak.toFixed(2) }}</span>
+              </div>
+            </div>
+            <p class="muted" style="font-size: 12px; margin: 8px 0 0">
+              共 {{ subAxes.length }} 个知识点；薄弱度 ≥ 0.35 会被列为重点攻克对象。
+            </p>
+          </template>
+          <div v-else class="banner warn" style="margin-top: 8px">
+            该章节还没有学习记录。去「拍照」提问或做一次「练习」后，这里会显示本章各知识点的掌握度。
+          </div>
         </div>
 
         <!-- 薄弱点 -->
@@ -143,3 +252,14 @@ async function genReport(useLlm) {
     </template>
   </div>
 </template>
+
+<style scoped>
+.chapter-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 8px; border-radius: 10px; cursor: pointer;
+  border-bottom: 1px solid var(--line);
+}
+.chapter-row:hover { background: #f8fafd; }
+.chapter-row.on { background: var(--brand-weak); }
+.chev { color: var(--ink-3); font-size: 15px; }
+</style>

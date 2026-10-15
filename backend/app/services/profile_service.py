@@ -35,6 +35,42 @@ ERR_WEIGHTS = {
 DEFAULT_WEIGHT = 0.6
 # 低级错误：只反映"这次没做对"，不代表知识漏洞
 LOW_LEVEL_TAGS = {"careless", "misread", "calculation", "condition_miss"}
+
+# 模型常自创 tag 变体名（如 missing_method），此处归一化到标准集合，
+# 否则权重查表失败会退化成默认值，低级错误的"免判薄弱"保护也会失效。
+TAG_ALIASES = {
+    "missing_method": "method_missing",
+    "method_lack": "method_missing",
+    "no_method": "method_missing",
+    "method_unknown": "method_missing",
+    "carelessness": "careless",
+    "silly_mistake": "careless",
+    "read_wrong": "misread",
+    "misreading": "misread",
+    "misunderstood_problem": "misread",
+    "calculation_error": "calculation",
+    "calc_error": "calculation",
+    "miscalculation": "calculation",
+    "missed_condition": "condition_miss",
+    "miss_condition": "condition_miss",
+    "concept_confusion": "concept_unclear",
+    "unclear_concept": "concept_unclear",
+    "concept_missing": "concept_unclear",
+    "no_clue": "no_idea",
+    "no_thinking": "no_idea",
+    "knowledge_forgotten": "knowledge_gap",
+    "forgot_knowledge": "knowledge_gap",
+}
+
+
+def normalize_tag(tag: str) -> str:
+    """把模型自创的错因 tag 归一化到标准集合。"""
+    t = (tag or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if t in ERR_WEIGHTS or t in LOW_LEVEL_TAGS:
+        return t
+    return TAG_ALIASES.get(t, t)
+
+
 DECAY_DAYS = 30.0            # 时间衰减常数
 EMA_OLD = 0.7                # 掌握度 EMA 系数
 WEAK_THRESHOLD = 0.35        # 薄弱判定阈值
@@ -81,7 +117,8 @@ def _or_create(session: Session, user_id: int, kp_id: int) -> Mastery:
 def resolve_kp_ids(session: Session, names: list[str]) -> list[int]:
     """知识点名称 → id（答疑时模型给的是 kp_tags 名称，此处映射到库内 id）。
 
-    先精确匹配，未命中的再做包含式模糊匹配，保证尽量入账。
+    四级匹配：精确 → 去噪精确 → 双向包含 → 去噪包含，尽量提高命中率。
+    模型常写「函数的定义域」「定义域求法」，库内是「函数定义域」，故需要去噪。
     """
     names = [n.strip() for n in (names or []) if n and n.strip()]
     if not names:
@@ -90,20 +127,50 @@ def resolve_kp_ids(session: Session, names: list[str]) -> list[int]:
         select(KnowledgePoint).where(KnowledgePoint.level == 3)
     ).all()
     name_map = {r.name: r.id for r in rows}
+
+    def denoise(s: str) -> str:
+        """归一化名称：先剥离常见后缀词，再删去结构助词「的」。
+
+        例：「函数的定义域」→「函数定义域」「定义域求法」→「定义域」。
+        两侧名称都走同样归一化后再比较，避免误伤（如「函数的连续性」）。
+        """
+        s = s.strip()
+        for suf in ("的求法", "求法", "的计算", "计算", "及应用", "应用"):
+            if s.endswith(suf) and len(s) > len(suf):
+                s = s[: -len(suf)]
+        return s.replace("的", "").strip()
+
+    denoised_map = {
+        dn: r.id for r in rows if (dn := denoise(r.name))
+    }
     ids: list[int] = []
-    unresolved: list[str] = []
+
+    def add(i: int) -> None:
+        if i not in ids:
+            ids.append(i)
+
     for n in names:
-        if n in name_map:
-            ids.append(name_map[n])
-        else:
-            unresolved.append(n)
-    if unresolved:
-        for n in unresolved:
-            for r in rows:  # 模糊：模型标签可能更短或更长
-                if n in r.name or r.name in n:
-                    ids.append(r.id)
+        if n in name_map:                      # ① 精确
+            add(name_map[n])
+            continue
+        dn = denoise(n)
+        if dn in denoised_map:                 # ② 去噪精确
+            add(denoised_map[dn])
+            continue
+        hit = None
+        for r in rows:                         # ③ 双向包含（原逻辑）
+            if n in r.name or r.name in n:
+                hit = r.id
+                break
+        if hit is None and dn:                 # ④ 去噪包含
+            for r in rows:
+                rn = denoise(r.name)
+                if dn and (dn in rn or rn in dn):
+                    hit = r.id
                     break
-    return list(dict.fromkeys(ids))
+        if hit is not None:
+            add(hit)
+    return ids
 
 
 def kp_ids_of(session: Session, question: Question) -> list[int]:
@@ -153,7 +220,9 @@ def record_feedback(
 
     solved=True 表示用户反馈"我看懂了/会了"，直接按掌握度上调处理。
     """
-    tags = [t for t in (selected or []) if t]
+    # tag 归一化：模型/前端传来的可能是自创变体（如 missing_method）
+    tags = [normalize_tag(t) for t in (selected or []) if t]
+    tags = list(dict.fromkeys(tags))
     notes = [c.strip() for c in (custom or []) if c and c.strip()]
     model_w = _norm_weights(question.meta_json)
 
@@ -292,20 +361,48 @@ def user_kp_stats(session: Session, user_id: int) -> list[dict]:
 
 
 def radar_data(session: Session, user_id: int) -> dict:
-    """雷达图数据（后端出 JSON，前端画）：按章聚合平均掌握度 + 薄弱点。"""
+    """雷达图数据（后端出 JSON，前端画）：按章聚合平均掌握度 + 薄弱点。
+
+    轴是**全书章节骨架**（按书序），用户没练过的章节值为 0 并标 practiced=False，
+    这样雷达图始终是完整的正 N 边形（如全书 12 章 → 正十二边形），
+    能一眼看出"哪些章节还没开始学"，而不是只画有数据的几章。
+    """
     from ..models import KnowledgePoint
 
     stats = user_kp_stats(session, user_id)
     by_chapter: dict[str, list[float]] = {}
     for s in stats:
         by_chapter.setdefault(s["chapter"] or "未分类", []).append(s["score"])
-    axes = [
-        {"axis": ch, "value": round(sum(v) / len(v), 3), "kp_count": len(v)}
-        for ch, v in by_chapter.items()
-    ]
+
+    # 全书章节骨架（L1 按 id 顺序 = 教材顺序）
+    all_chapters = session.exec(
+        select(KnowledgePoint)
+        .where(KnowledgePoint.level == 1)
+        .order_by(KnowledgePoint.id)
+    ).all()
+    order = [c.name for c in all_chapters]
+    # 兜底：不在骨架里的章节（如自建测试数据）追加在后面
+    for ch in by_chapter:
+        if ch not in order:
+            order.append(ch)
+
+    axes = []
+    for ch in order:
+        vals = by_chapter.get(ch)
+        if vals:
+            axes.append(
+                {
+                    "axis": ch,
+                    "value": round(sum(vals) / len(vals), 3),
+                    "kp_count": len(vals),
+                    "practiced": True,
+                }
+            )
+        else:
+            axes.append({"axis": ch, "value": 0.0, "kp_count": 0, "practiced": False})
     weak = [s for s in stats if s["weak"] >= WEAK_THRESHOLD]
     return {
-        "axes": sorted(axes, key=lambda a: -a["value"]),
+        "axes": axes,  # 已按教材章序排列，含未练习章节（value=0）
         "weak_points": [
             {
                 "kp_id": s["kp_id"],

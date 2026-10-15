@@ -1,21 +1,28 @@
 <script setup>
 import { computed } from 'vue'
 
-// 掌握度雷达图：后端出 JSON（/api/v1/profile/users/{id}/radar），前端手绘 SVG。
-// axes: [{axis:"第一章 极限与连续", value:0.42, kp_count:3}, ...]
+// 掌握度雷达图：后端出 JSON，前端手绘 SVG。
+// 支持任意边数（全书 12 章 → 正十二边形；单章知识点 → 正 N 边形）。
+// 布局要点：viewBox 留足标签空间 + 标签分行（章号/名称/数值），
+// 避免长章节名被画布边界裁掉（此前的显示问题即由此而来）。
 const props = defineProps({
   axes: { type: Array, default: () => [] },
+  interactive: { type: Boolean, default: false },
+  maxWidth: { type: Number, default: 380 },
 })
+const emit = defineEmits(['select'])
 
-const SIZE = 320
-const CX = SIZE / 2
-const CY = SIZE / 2 + 6
-const R = 108
+// 画布：宽高分别留出标签区（左右约 150px、上下约 60px）
+const W = 440
+const H = 400
+const CX = W / 2
+const CY = H / 2 - 5
+const R = 100            // 数据区半径
+const LR = R + 46        // 标签位置半径
 const LEVELS = 4
 
 const n = computed(() => Math.max(props.axes.length, 3))
 
-// 轴角度（从正上方开始顺时针）
 function angle(i, count) {
   return (Math.PI * 2 * i) / count - Math.PI / 2
 }
@@ -60,25 +67,51 @@ const dataPoly = computed(() => {
 const dots = computed(() =>
   props.axes.map((ax, i) => {
     const [x, y] = point(i, ax.value, props.axes.length)
-    return { x, y, v: ax.value }
+    return { x, y, v: ax.value, practiced: ax.practiced !== false }
   })
 )
 
-// 轴标签：过长章节名截断成两行
-function shortName(name) {
+// 「第十二章  常微分方程」→ 章号 + 名称，便于分行显示
+function splitLabel(name) {
   const s = String(name || '').replace(/\s+/g, '')
-  return s.length > 7 ? s.slice(0, 7) + '…' : s
+  const m = s.match(/^(第[一二三四五六七八九十百]+章)(.*)$/)
+  if (m) return { head: m[1], body: m[2] }
+  return { head: '', body: s }
 }
+
+function clip(s, len) {
+  // 截断后追加省略号，总长仍受 len 约束（否则会超出宽度限制）
+  return s.length > len ? s.slice(0, len - 1) + '…' : s
+}
+
+// 标签限制：轴多时更短，避免相邻标签相撞
+const bodyLimit = computed(() => {
+  const n = props.axes.length
+  if (n > 8) return 5
+  if (n <= 3) return 6
+  return 7
+})
 
 const labels = computed(() =>
   props.axes.map((ax, i) => {
     const a = angle(i, props.axes.length)
-    const lr = R + 30
+    const x = CX + LR * Math.cos(a)
+    const y = CY + LR * Math.sin(a)
+    const cos = Math.cos(a)
+    const side = cos > 0.2 ? 1 : cos < -0.2 ? -1 : 0
+    const { head, body } = splitLabel(ax.axis)
+    const practiced = ax.practiced !== false
+    // 三行排布：章号 → 名称 → 数值；无章号时省略第一行
+    const rows = head
+      ? [head, clip(body, bodyLimit.value), ax.value.toFixed(2)]
+      : [clip(body, bodyLimit.value), ax.value.toFixed(2)]
     return {
-      x: CX + lr * Math.cos(a),
-      y: CY + lr * Math.sin(a),
-      text: shortName(ax.axis),
-      anchor: Math.abs(Math.cos(a)) < 0.3 ? 'middle' : Math.cos(a) > 0 ? 'start' : 'end',
+      x: x + side * 8,
+      y,
+      rows,
+      practiced,
+      anchor: side === 1 ? 'start' : side === -1 ? 'end' : 'middle',
+      idx: i,
     }
   })
 )
@@ -86,7 +119,13 @@ const labels = computed(() =>
 
 <template>
   <div class="radar-wrap">
-    <svg :viewBox="`0 0 ${SIZE} ${SIZE}`" class="radar-svg" role="img" aria-label="掌握度雷达图">
+    <svg
+      :viewBox="`0 0 ${W} ${H}`"
+      class="radar-svg"
+      :style="{ maxWidth: maxWidth + 'px' }"
+      role="img"
+      aria-label="掌握度雷达图"
+    >
       <!-- 网格 -->
       <polygon
         v-for="(p, i) in gridPolys"
@@ -116,18 +155,48 @@ const labels = computed(() =>
         stroke-width="2"
         stroke-linejoin="round"
       />
-      <circle v-for="(d, i) in dots" :key="'d' + i" :cx="d.x" :cy="d.y" r="3.5" fill="#2f6bff" />
-      <!-- 标签 -->
-      <text
+      <circle
+        v-for="(d, i) in dots"
+        :key="'d' + i"
+        :cx="d.x"
+        :cy="d.y"
+        r="3.5"
+        :fill="d.practiced ? '#2f6bff' : '#c3cbd9'"
+      />
+
+      <!-- 轴标签（interactive 时可点击下钻） -->
+      <g
         v-for="(l, i) in labels"
         :key="'l' + i"
-        :x="l.x"
-        :y="l.y"
-        :text-anchor="l.anchor"
-        font-size="11"
-        fill="#5a6b8c"
-        dominant-baseline="middle"
-      >{{ l.text }}</text>
+        :class="{ clickable: interactive }"
+        @click="interactive && emit('select', l.idx)"
+      >
+        <text
+          v-for="(row, ri) in l.rows"
+          :key="ri"
+          :x="l.x"
+          :y="l.y - (l.rows.length - 1) * 6 + ri * 13"
+          :text-anchor="l.anchor"
+          :font-size="ri === l.rows.length - 1 ? 10 : 11.5"
+          :fill="!l.practiced ? '#b6c0d0' : ri === 0 && l.rows.length === 3 ? '#8b97ad' : interactive ? '#2f6bff' : '#5a6b8c'"
+          dominant-baseline="middle"
+        >{{ row }}</text>
+        <!-- 透明热区：覆盖整个标签块 -->
+        <rect
+          v-if="interactive"
+          :x="l.anchor === 'start' ? l.x - 6 : l.anchor === 'end' ? l.x - 74 : l.x - 40"
+          :y="l.y - (l.rows.length - 1) * 6 - 8"
+          width="80"
+          :height="l.rows.length * 13 + 8"
+          fill="transparent"
+        />
+      </g>
     </svg>
   </div>
 </template>
+
+<style scoped>
+.radar-svg { width: 100%; height: auto; }
+.clickable { cursor: pointer; }
+.clickable:hover text { text-decoration: underline; }
+</style>
