@@ -8,13 +8,38 @@ echo   智能拍照学习助手 - 一键安装
 echo ============================================================
 echo.
 
-echo [1/5] 检查 Python ...
-python --version >nul 2>&1
+echo [1/6] 检查 Python ...
+where python >nul 2>&1
 if errorlevel 1 goto NOPYTHON
-python --version
+for /f "tokens=2" %%v in ('python --version 2^>^&1') do set PYV=%%v
+echo   Python %PYV%
+for /f "tokens=1,2 delims=." %%a in ("%PYV%") do set PYMAJOR=%%a& set PYMINOR=%%b
+if %PYMAJOR% NEQ 3 goto PYOLD
+if %PYMINOR% LSS 11 goto PYOLD
+goto PYOK
+
+:PYOLD
+echo   [警告] 建议使用 Python 3.11 及以上，当前版本可能导致依赖安装失败。
+echo   仍将继续安装，若报错请升级 Python 后重试。
+:PYOK
 echo.
 
-echo [2/5] 创建后端虚拟环境 ...
+echo [2/6] 检查 Node.js ...
+where npm >nul 2>&1
+if errorlevel 1 goto NONPM
+for /f "delims=" %%v in ('node -v 2^>nul') do set NODEV=%%v
+set NODEV=%NODEV:v=%
+echo   Node %NODEV%
+for /f "tokens=1 delims=." %%a in ("%NODEV%") do set NODE_MAJOR=%%a
+if %NODE_MAJOR% LSS 18 echo   [警告] Vite 6 需要 Node 18 及以上，前端可能启动失败。
+goto NODEOK
+:NONPM
+echo   [警告] 未检测到 Node.js / npm，前端将无法启动。
+echo   请安装 Node.js 18+ (https://nodejs.org) 后重跑本脚本。
+:NODEOK
+echo.
+
+echo [3/6] 创建后端虚拟环境 ...
 if exist "backend\.venv\Scripts\python.exe" goto VENVOK
 python -m venv backend\.venv
 if errorlevel 1 goto VENVFAIL
@@ -29,28 +54,24 @@ exit /b 1
 :VENVOK
 echo.
 
-echo [3/5] 安装后端依赖（可能需要几分钟）...
+echo [4/6] 安装后端依赖（可能需要几分钟）...
 backend\.venv\Scripts\python.exe -m pip install --upgrade pip -q
 backend\.venv\Scripts\pip.exe install -r backend\requirements.txt
 if errorlevel 1 goto PIPFAIL
 echo.
 
-echo [4/5] 安装前端依赖 ...
+echo [5/6] 安装前端依赖 ...
 where npm >nul 2>&1
-if errorlevel 1 goto NONPM
+if errorlevel 1 goto ENVFILE
 pushd frontend
 call npm install
 popd
-goto ENVFILE
-
-:NONPM
-echo   [警告] 未检测到 Node.js，跳过前端依赖。
-echo   请安装 Node.js 18+ 后手动执行：cd frontend 然后 npm install
+if errorlevel 1 echo   [警告] 前端依赖安装失败，可稍后手动 cd frontend 后执行 npm install
 goto ENVFILE
 
 :ENVFILE
 echo.
-echo [5/5] 准备环境变量文件 ...
+echo [6/6] 准备环境变量文件 ...
 if exist "backend\.env" goto DONE
 if not exist "backend\.env.example" goto NOEXAMPLE
 copy "backend\.env.example" "backend\.env" >nul
@@ -70,6 +91,7 @@ echo ============================================================
 echo   下一步：
 echo     1. 编辑 backend\.env 填入 DEEPSEEK_API_KEY
 echo     2. 双击 start.bat 启动前后端
+echo   若启动失败，双击 check.bat 做环境自检并把结果发给队友
 echo ============================================================
 pause
 exit /b 0

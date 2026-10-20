@@ -285,7 +285,39 @@ cd ../frontend && npm install && npm run dev  # 另开终端
 | `DATABASE_URL` | `sqlite:///./dev.db` | 切 MySQL：`mysql+pymysql://user:pwd@host:3306/photo_tutor?charset=utf8mb4` |
 | `UPLOAD_DIR` | `./uploads` | 用户上传图片目录 |
 
-### 常见问题
+### 启动失败排查
+
+浏览器显示 **127.0.0.1 拒绝连接**，意味着服务没起来（不是页面报错）。按顺序排查：
+
+**第一步：双击 `check.bat`**
+
+它会逐项检查并打印结果，哪项打 `X` 就按提示处理：
+
+```
+[1] Python        版本是否 3.11+
+[2] Node.js       版本是否 18+（Vite 6 硬要求）
+[3] 后端环境      backend\.venv 是否存在、.env 是否就绪
+[4] 前端依赖      frontend\node_modules 是否存在
+[5] 端口占用      8000 / 5173 是否被占
+[6] 题库文件      dev.db 与 kb_images 是否完整
+```
+
+**第二步：看那两个黑窗口**
+
+`start.bat` 会打开「后端服务」「前端服务」两个窗口，报错就在里面。`start.bat` 现在会**等端口真正就绪**才打开浏览器，超时会直接告诉你哪个服务没起来。
+
+**常见原因对照**
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| 后端窗口一闪而过 / 报 `ModuleNotFoundError` | 依赖没装全 | 重跑 `setup.bat` |
+| 前端窗口报 `Vite requires Node.js version 18+` | Node 版本过低 | 升级到 Node 18+ |
+| 前端窗口报找不到 `vite` | 没装 node_modules | `cd frontend` 后 `npm install` |
+| 后端报 `no such table` | 首次启动建表被中断 | 删掉 `backend/dev.db` 重启（会重建空库，但**会丢题库**） |
+| 8000 或 5173 被占用 | 上次服务没关干净 | 关掉旧窗口，或改端口 |
+| 页面能开但白屏 | 前端起来了、后端没起 | 看后端窗口 |
+
+### 其他常见问题
 
 **没有 API Key 能用吗？** 除 AI 功能（答疑、诊断报告 LLM 版、阅卷、解析求助）外全部可用：题库浏览、组卷、客观题判分、画像统计、雷达图、错题本。
 

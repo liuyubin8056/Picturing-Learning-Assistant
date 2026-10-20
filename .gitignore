@@ -14,6 +14,7 @@
 !README.md
 !setup.bat
 !start.bat
+!check.bat
 !/backend/
 !/frontend/
 # 说明：以下顶层内容由 /* 覆盖，无需单独写规则——
