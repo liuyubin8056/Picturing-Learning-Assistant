@@ -238,16 +238,28 @@ def crop_problems(page: int, problems: list[dict]) -> list[str | None]:
     doc = pymupdf.open(find_pdf())
     pg = doc[page - 1]
     rect = pg.rect
-    zoom = 2.0
+    # 1.5x 渲染：约 135dpi，公式清晰度足够；2.0x 时 3600 张图共 194MB，
+    # 仓库随代码分发体积过大，降到 1.5x 后约减少 45%
+    zoom = 1.5
     ocr = load_json(f"ocr_p{page}.json")
     img_h = ocr["img_size"][1] if ocr else 0
 
     def cut(y0: float, y1: float, suffix: str, no) -> str:
-        """按纵向比例裁一张图并返回相对路径。"""
+        """按纵向比例裁一张图并返回相对路径。
+
+        整题图（suffix 为空）单独放 whole/：它只用于人工校对，
+        体积占全部图片的三分之一，因此不随仓库分发（见 .gitignore）。
+        """
         clip = pymupdf.Rect(
             rect.x0, rect.y0 + rect.height * y0, rect.x1, rect.y0 + rect.height * y1
         )
         pix = pg.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), clip=clip)
+        if suffix == "":
+            out_dir = CROP_DIR / "whole"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out = out_dir / f"p{page:04d}_q{no}.png"
+            pix.save(out)
+            return f"kb_images/whole/{out.name}"
         out = CROP_DIR / f"p{page:04d}_q{no}{suffix}.png"
         pix.save(out)
         return f"kb_images/problems/{out.name}"
@@ -294,6 +306,15 @@ def crop_problems(page: int, problems: list[dict]) -> list[str | None]:
         if split is not None:
             refined = refine_split(page, y0, y1, split) or split
             p["split_refined"] = round(refined, 4)
+        else:
+            # 模型没给分界（早期 prompt 提取的旧数据）：
+            # 以「题干约占本题 1/3」为先验，再让 OCR 锚点（选项行 / 解-证明-由 / 行顶部）校正。
+            # 这比直接放弃多救回相当一批题，且零 token 成本。
+            guess = y0 + (y1 - y0) * 0.35
+            refined = refine_split(page, y0, y1, guess)
+            if refined:
+                p["split_refined"] = round(refined, 4)
+                p["split_guess"] = "ocr_only"
 
         # 题干图必须有足够高度（约 2 行）。太薄说明分界点落在题干行内部，
         # 生成出来只会是一条细边，练习时看不到完整题目 → 宁可不分离。

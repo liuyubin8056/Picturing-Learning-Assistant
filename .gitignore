@@ -49,10 +49,13 @@ backend/_kb_out/
 backend/smoke.png
 
 # ---------- ③-2 题库数据（必须入库，供队友直接运行） ----------
-# dev.db 内含：900 个知识点 + 全量题库 + 演示用户 1001 的学习数据
-# 知识库图片：每题 题干图/解析图/整题图
+# dev.db 内含：900 个知识点 + 1348 道题 + 演示用户 1001 的学习数据
+# problems/ 存题干图与解析图（练习与判分必需）
 !backend/dev.db
 !backend/kb_images/
+# 整题图仅用于人工校对，体积占图片总量 1/3，不随仓库分发；
+# 需要时运行 scripts/kb/08_recrop_all.py 自动重建到该目录
+backend/kb_images/problems/whole/
 
 # ---------- ④ Python 缓存与构建 ----------
 # 任意层级的字节码缓存
