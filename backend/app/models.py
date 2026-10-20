@@ -94,7 +94,9 @@ class KBProblem(SQLModel, table=True):
     source_page: int | None = Field(default=None, index=True)  # PDF 物理页
     book_page: int | None = None  # 书内页码（页脚）
     page_image_path: str | None = None  # 整页图
-    crop_image_path: str | None = None  # 题目裁剪图（一题一图）
+    crop_image_path: str | None = None  # 整题裁剪图（题干+解析，兼容旧数据）
+    stem_image_path: str | None = None  # 题干区裁剪图（含题内坐标系/函数图像，练习时只给这张）
+    solution_image_path: str | None = None  # 解析区裁剪图（判分后才展示）
     extract_status: str = Field(default="ok", index=True)  # ok / low_confidence / failed
     raw_json: str | None = None  # 模型原始输出，便于回溯修正
     ocr_text: str | None = None  # OCR 辅助文本（仅用于定位/匹配，不作为题干来源）
@@ -202,7 +204,9 @@ class TestQuestion(SQLModel, table=True):
     options: str | None = None
     answer: str | None = None
     solution: str | None = None  # 库内解析（主观题判错后直接给）
-    image_path: str | None = None
+    image_path: str | None = None  # 整题图（含解析，仅作参考）
+    stem_image_path: str | None = None  # 题干图（不含解析，答题时展示）
+    solution_image_path: str | None = None  # 解析图（判分后才展示）
     kp_ids: str | None = None
     question_type: str | None = None
     is_objective: bool = Field(default=False, index=True)

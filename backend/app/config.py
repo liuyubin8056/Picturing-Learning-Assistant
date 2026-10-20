@@ -19,7 +19,9 @@ class Settings(BaseSettings):
     deepseek_model: str = "Deepseek-V4.1-Flash"
     deepseek_timeout: float = 60.0
     # 推理型模型的思考 token 也计入 max_tokens，偏小会导致正文为空
-    deepseek_max_tokens: int = 8192
+    # 推理型模型的思考 token 与正文共享该上限：设得太小会导致正文为空
+    # （实测高数题思考可达 12000+ token），故给足 32000
+    deepseek_max_tokens: int = 32000
 
     # 数据库（开发默认 SQLite，可切 MySQL）
     database_url: str = "sqlite:///./dev.db"

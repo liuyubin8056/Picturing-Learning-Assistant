@@ -1,8 +1,21 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { createTest, submitTest, detailedSolution, listTests } from '../api'
+import {
+  createTest, submitTest, detailedSolution, listTests,
+  explainQuestion, judgeQuestionImage,
+} from '../api'
 import { userId } from '../store/user'
 import MarkdownView from '../components/MarkdownView.vue'
+
+// 看解析还不懂时的困惑类型（与后端 CONFUSION_LABELS 对应）
+const CONFUSIONS = [
+  { tag: 'step', label: '某一步跳太快' },
+  { tag: 'why', label: '为什么能这样变形' },
+  { tag: 'concept', label: '概念没学过' },
+  { tag: 'formula', label: '公式不会套' },
+  { tag: 'start', label: '不知道从哪下手' },
+  { tag: 'answer', label: '不明白答案为什么是它' },
+]
 
 const mode = ref('setup')       // setup | answering | result
 const purpose = ref('weakness')
@@ -16,6 +29,80 @@ const detailLoading = ref({})   // { [qid]: true }
 const details = ref({})         // { [qid]: 文本 }
 const history = ref([])
 const error = ref('')
+
+// 「还是不懂」交互状态（按题目 id 索引）
+const tutorSel = ref({})        // { qid: [tag, ...] }
+const tutorCustom = ref({})     // { qid: '自定义描述' }
+const tutorLoading = ref({})    // { qid: true }
+const tutorOut = ref({})        // { qid: '讲解 markdown' }
+const tutorFollowup = ref({})   // { qid: [{tag,label}] }
+
+// 主观题拍照判分状态
+const judgeBusy = ref({})       // { qid: true }
+const judgeRes = ref({})        // { qid: {correct, reason, student_answer, confidence} }
+
+function pickJudgeFile(q) {
+  document.getElementById('judge-file-' + q.id)?.click()
+}
+
+async function onJudgeFile(q, e) {
+  const f = e.target.files?.[0]
+  if (!f) return
+  e.target.value = ''  // 允许重选同一文件
+  judgeBusy.value = { ...judgeBusy.value, [q.id]: true }
+  try {
+    const r = await judgeQuestionImage(q.id, f, userId.value)
+    judgeRes.value = { ...judgeRes.value, [q.id]: r }
+    // 判分可用则回填为本题作答结果，提交时直接用
+    if (typeof r.correct === 'boolean') {
+      answers.value = { ...answers.value, [q.id]: { ...(answers.value[q.id] || {}), self_correct: r.correct } }
+      window.__toast?.(r.correct ? 'AI 判定答对，已记录' : 'AI 判定答错，已记录')
+    } else {
+      window.__toast?.('AI 无法确定，请自己判对错')
+    }
+  } catch (err) {
+    window.__toast?.('阅卷失败：' + (err.message || ''))
+  } finally {
+    judgeBusy.value = { ...judgeBusy.value, [q.id]: false }
+  }
+}
+
+function toggleConfusion(qid, tag) {
+  const cur = tutorSel.value[qid] || []
+  const i = cur.indexOf(tag)
+  const next = i >= 0 ? cur.filter((t) => t !== tag) : [...cur, tag]
+  tutorSel.value = { ...tutorSel.value, [qid]: next }
+}
+
+async function askTutor(q, overrideTags = null) {
+  const tags = overrideTags || tutorSel.value[q.id] || []
+  const custom = overrideTags ? '' : (tutorCustom.value[q.id] || '')
+  if (!tags.length && !custom.trim()) {
+    window.__toast?.('先点一个你觉得卡住的地方，或写一句自己的话')
+    return
+  }
+  tutorLoading.value = { ...tutorLoading.value, [q.id]: true }
+  try {
+    const r = await explainQuestion(q.id, {
+      user_id: userId.value,
+      feedback_tags: tags,
+      custom: custom.trim() || null,
+    })
+    tutorOut.value = { ...tutorOut.value, [q.id]: r.explain_md }
+    tutorFollowup.value = { ...tutorFollowup.value, [q.id]: r.feedback_options || [] }
+    if (overrideTags) {
+      tutorSel.value = { ...tutorSel.value, [q.id]: overrideTags }
+    }
+  } catch (e) {
+    window.__toast?.('讲解生成失败：' + (e.message || ''))
+  } finally {
+    tutorLoading.value = { ...tutorLoading.value, [q.id]: false }
+  }
+}
+
+function followupAsk(q, opt) {
+  askTutor(q, [opt.tag])
+}
 
 onMounted(loadHistory)
 
@@ -181,7 +268,13 @@ const judgeOf = (qid) => (judgeResult.value?.detail || []).find((d) => d.questio
           <span class="tag" v-for="k in (q.kp_names || [])" :key="k">{{ k }}</span>
         </div>
 
-        <img v-if="q.image_path" :src="'/' + q.image_path" class="preview" style="margin-bottom: 10px" alt="题目图" />
+        <img
+          v-if="q.stem_image_path || q.image_path"
+          :src="'/' + (q.stem_image_path || q.image_path)"
+          class="preview"
+          style="margin-bottom: 10px"
+          alt="题目图"
+        />
         <div class="stem-box"><MarkdownView :text="q.stem" /></div>
 
         <!-- 客观题 -->
@@ -207,10 +300,41 @@ const judgeOf = (qid) => (judgeResult.value?.detail || []).find((d) => d.questio
           placeholder="填写你的答案"
           style="margin-top: 10px"
         />
-        <!-- 主观题：自评对错 -->
+        <!-- 主观题：拍照上传让 AI 阅卷，或自评 -->
         <template v-else>
-          <p class="hint" style="margin-bottom: 6px">这题是解答题：请对照自己的草稿判断——</p>
-          <div class="btn-row">
+          <p class="hint" style="margin: 10px 0 6px">这题是解答题，两种方式任选：</p>
+          <input
+            :id="'judge-file-' + q.id"
+            type="file"
+            accept="image/*"
+            capture="environment"
+            hidden
+            @change="(e) => onJudgeFile(q, e)"
+          />
+          <button
+            class="btn primary block"
+            :disabled="judgeBusy[q.id]"
+            @click="pickJudgeFile(q)"
+          >
+            {{ judgeBusy[q.id] ? 'AI 阅卷中（约 20~60 秒）…' : '📷 拍下我的解答，AI 判分' }}
+          </button>
+
+          <div v-if="judgeRes[q.id]" class="judge-box" :class="judgeRes[q.id].correct === true ? 'ok' : judgeRes[q.id].correct === false ? 'err' : ''">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px">
+              <b v-if="judgeRes[q.id].correct === true" style="color: var(--ok)">✓ AI 判定：答对了</b>
+              <b v-else-if="judgeRes[q.id].correct === false" style="color: var(--err)">✗ AI 判定：答错了</b>
+              <b v-else style="color: var(--warn)">AI 拿不准，请自己判断</b>
+              <span v-if="judgeRes[q.id].confidence" class="tag">把握 {{ Math.round(judgeRes[q.id].confidence * 100) }}%</span>
+            </div>
+            <div v-if="judgeRes[q.id].student_answer" style="font-size: 13.5px">
+              识别到你的答案：<b>{{ judgeRes[q.id].student_answer }}</b>
+            </div>
+            <div v-if="judgeRes[q.id].reason" class="muted" style="font-size: 13px; margin-top: 2px">
+              {{ judgeRes[q.id].reason }}
+            </div>
+          </div>
+
+          <div class="btn-row" style="margin-top: 10px">
             <button class="btn" :class="{ ok: answers[q.id]?.self_correct === true }" @click="setSelf(q.id, true)">✔ 我做对了</button>
             <button class="btn" :class="{ warn: answers[q.id]?.self_correct === false }" @click="setSelf(q.id, false)">✘ 我做错了</button>
           </div>
@@ -253,9 +377,63 @@ const judgeOf = (qid) => (judgeResult.value?.detail || []).find((d) => d.questio
             <div>正确答案：<b style="color: var(--ok)"><MarkdownView :text="judgeOf(q.id).correct_answer" /></b></div>
           </div>
 
-          <h3>库内解析</h3>
+          <h3>书上的解析</h3>
+          <img
+            v-if="q.solution_image_path"
+            :src="'/' + q.solution_image_path"
+            class="preview"
+            style="margin-bottom: 8px"
+            alt="解析图"
+          />
           <div class="answer" style="max-height: none">
             <MarkdownView :text="q.solution || '（无）'" />
+          </div>
+
+          <!-- 看解析还不懂 → 带着困惑让模型换讲法 -->
+          <div class="tutor-box">
+            <div class="tutor-head">
+              <b>还是不懂？</b>
+              <span class="muted">告诉我卡在哪，AI 换个讲法</span>
+            </div>
+            <div class="chip-row">
+              <button
+                v-for="c in CONFUSIONS"
+                :key="c.tag"
+                class="chip"
+                :class="{ on: tutorSel[q.id]?.includes(c.tag) }"
+                @click="toggleConfusion(q.id, c.tag)"
+              >{{ c.label }}</button>
+            </div>
+            <input
+              v-model="tutorCustom[q.id]"
+              placeholder="也可以用自己的话说（可选）"
+              style="margin-top: 8px"
+            />
+            <button
+              class="btn primary block"
+              style="margin-top: 8px"
+              :disabled="tutorLoading[q.id]"
+              @click="askTutor(q)"
+            >
+              {{ tutorLoading[q.id] ? 'AI 正在重新讲解（约 30~90 秒）…' : '换个讲法（AI 讲解）' }}
+            </button>
+
+            <div v-if="tutorOut[q.id]" class="tutor-reply">
+              <div class="answer" style="max-height: none; border-color: var(--brand)">
+                <MarkdownView :text="tutorOut[q.id]" />
+              </div>
+              <div v-if="tutorFollowup[q.id]?.length" style="margin-top: 8px">
+                <div class="muted" style="margin-bottom: 6px">还不清楚？点一下继续追问：</div>
+                <div class="chip-row">
+                  <button
+                    v-for="o in tutorFollowup[q.id]"
+                    :key="o.tag"
+                    class="chip"
+                    @click="followupAsk(q, o)"
+                  >{{ o.label }}</button>
+                </div>
+              </div>
+            </div>
           </div>
 
           <template v-if="details[q.id]">
@@ -272,3 +450,52 @@ const judgeOf = (qid) => (judgeResult.value?.detail || []).find((d) => d.questio
     </template>
   </div>
 </template>
+
+<style scoped>
+.tutor-box {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  background: #f8faff;
+  border: 1px solid var(--line);
+}
+.tutor-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13.5px;
+}
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chip {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink-2);
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.chip.on {
+  border-color: var(--brand);
+  color: var(--brand);
+  background: var(--brand-weak);
+}
+.chip:active { transform: scale(0.97); }
+.tutor-reply { margin-top: 10px; }
+
+.judge-box {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f8fafd;
+  border: 1px solid var(--line);
+}
+.judge-box.ok { background: var(--ok-weak); border-color: var(--ok); }
+.judge-box.err { background: var(--err-weak); border-color: var(--err); }
+</style>

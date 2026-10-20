@@ -11,6 +11,9 @@
 /*
 !.gitignore
 !.gitattributes
+!README.md
+!setup.bat
+!start.bat
 !/backend/
 !/frontend/
 # 说明：以下顶层内容由 /* 覆盖，无需单独写规则——
@@ -30,9 +33,9 @@ backend/.env.*
 !backend/.env.example
 
 # ---------- ③ 运行时数据与构建产物 ----------
-# 开发/测试 SQLite 库（运行时生成）
-backend/dev.db
+# 测试库（运行时生成）
 backend/test_dev.db
+# 其他临时 sqlite（注意：dev.db 是题库数据，需入库，见下方放行规则）
 backend/*.db
 # 用户上传的题目图片（运行时数据）
 backend/uploads/*
@@ -40,11 +43,16 @@ backend/uploads/*
 # 用户画像 md（运行时生成，含真实用户数据）
 backend/profiles/*
 !backend/profiles/.gitkeep
-# 知识库构建中间产物（脚本可重新生成）
+# 知识库构建中间产物（脚本可重新生成，体积约 150MB）
 backend/_kb_out/
-backend/kb_images/
 # 冒烟测试临时图片
 backend/smoke.png
+
+# ---------- ③-2 题库数据（必须入库，供队友直接运行） ----------
+# dev.db 内含：900 个知识点 + 全量题库 + 演示用户 1001 的学习数据
+# 知识库图片：每题 题干图/解析图/整题图
+!backend/dev.db
+!backend/kb_images/
 
 # ---------- ④ Python 缓存与构建 ----------
 # 任意层级的字节码缓存

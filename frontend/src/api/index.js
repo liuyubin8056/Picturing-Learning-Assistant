@@ -63,6 +63,18 @@ export const submitTest = (sid, answers) =>
   request(`/tests/sessions/${sid}/submit`, { method: 'POST', body: { answers } })
 export const detailedSolution = (qid) =>
   request(`/tests/questions/${qid}/detailed-solution`, { method: 'POST' })
+
+// 看解析还不懂 → 带着困惑让模型换讲法（feedback_tags 会注入 prompt）
+export const explainQuestion = (qid, payload) =>
+  request(`/tests/questions/${qid}/explain`, { method: 'POST', body: payload })
+
+// 考试式作答：上传手写解答照片，模型按答案匹配判分
+export const judgeQuestionImage = (qid, file, userId) => {
+  const fd = new FormData()
+  fd.append('image', file)
+  if (userId != null) fd.append('user_id', String(userId))
+  return request(`/tests/questions/${qid}/judge-image`, { method: 'POST', body: fd, isForm: true })
+}
 export const listTests = (userId) => request(`/tests/users/${userId}/sessions`)
 
 // ---------- 错题本 ----------

@@ -227,14 +227,13 @@ def record_feedback(
     model_w = _norm_weights(question.meta_json)
 
     ids = kp_ids_of(session, question)
-    weight_sum = sum(model_w.get(t, DEFAULT_WEIGHT) for t in tags) or DEFAULT_WEIGHT
 
-    # 掌握度变化：有真实薄弱原因 → 下降越多权重越高；"会了" → 上升
+    # 掌握度变化：取最强错因（与 weak_score 口径一致，避免多选被平均稀释）
     if solved and not tags:
         delta = 0.15
     else:
-        avg_w = weight_sum / max(len(tags), 1)
-        delta = -0.12 * avg_w
+        cw = max((model_w.get(t, DEFAULT_WEIGHT) for t in tags), default=DEFAULT_WEIGHT)
+        delta = -0.12 * cw
 
     touched = 0
     has_real_gap = any(t not in LOW_LEVEL_TAGS for t in tags)
@@ -306,11 +305,12 @@ def weak_score(m: Mastery, now: datetime | None = None) -> float:
     # 错误率：自测错权重高于求助（求助只说明"不会"，自测错还可能含笔误）
     err = (m.ask_count + 2 * m.wrong_count) / max(total, 1)
 
-    # 错因加权：用户自报原因的平均权重（无反馈时中性 0.5）
+    # 错因加权：取**最强错因**而非平均——多选时不能被低级错误稀释真问题。
+    # 例：学生同时勾「概念不清」和「粗心」，若不取 max，平均后 0.6 会把
+    #     概念不清（1.0）的真实信号冲淡，导致该知识点漏判为不薄弱（实测 0.33）。
     tags = json.loads(m.error_tags or "{}")
     if tags:
-        wsum = sum(count * _weight(t) for t, count in tags.items())
-        cw = wsum / sum(tags.values())
+        cw = max(_weight(t) for t in tags)
     else:
         cw = 0.5
 

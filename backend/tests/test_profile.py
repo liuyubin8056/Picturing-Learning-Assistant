@@ -129,6 +129,28 @@ def test_low_level_error_weak_score_lower(client):
     assert w_real > w_careless, f"真实漏洞({w_real}) 应比粗心({w_careless}) 薄弱度更高"
 
 
+def test_multi_choice_not_diluted_by_low_level_tag(client):
+    """多选错因时取「最强错因」：勾了粗心不能把「概念不清」稀释成不薄弱。
+
+    回归用例：此前用平均值，粗心(0.2)+概念不清(1.0) 平均成 0.6，
+    薄弱度只有 0.33（低于 0.35 阈值）→ 真实知识漏洞被漏判。
+    """
+    from app.models import Mastery
+    from app.services.profile_service import weak_score
+
+    both = Mastery(user_id=1, kp_id=1, ask_count=1, feedback_count=1)
+    both.error_tags = json.dumps({"careless": 1, "concept_unclear": 1})
+    only_careless = Mastery(user_id=1, kp_id=1, feedback_count=1)
+    only_careless.error_tags = json.dumps({"careless": 1})
+
+    w_both = weak_score(both)
+    w_careless = weak_score(only_careless)
+
+    assert w_both >= 0.35, f"勾选概念不清应判薄弱，实际 {w_both}"
+    assert w_both > w_careless, "多选含真实错因时，薄弱度必须高于纯粗心"
+    assert w_careless == 0.0, f"纯粗心不应判薄弱，实际 {w_careless}"
+
+
 def test_solved_feedback_raises_score(client):
     """反馈「已看懂/会了」应提升掌握度。"""
     with Session(engine) as s:

@@ -1,10 +1,39 @@
-fastapi>=0.115
-uvicorn[standard]>=0.30
-sqlmodel>=0.0.22
-pydantic-settings>=2.4
-httpx>=0.27
-python-multipart>=0.0.9
-pytest>=8.0
-pymysql>=1.1
-pillow>=10.0
-rapidocr-onnxruntime>=1.3
+# ============================================================
+# 智能拍照学习助手 · 后端依赖
+#
+# 安装：pip install -r requirements.txt
+# 版本按当前开发环境实测锁定；传递依赖（starlette/anyio/httpcore 等）
+# 由 pip 自动解析，无需逐条列出。
+# ============================================================
+
+# ---------- Web 框架与服务 ----------
+fastapi==0.143.0
+uvicorn[standard]==0.54.0
+python-multipart==0.0.32
+pydantic==2.14.0
+pydantic-settings==2.15.0
+python-dotenv==1.2.4
+
+# ---------- 数据库 ----------
+sqlmodel==0.0.48
+SQLAlchemy==2.1.4
+# MySQL 部署时需要（开发默认 SQLite，无需额外安装数据库）
+PyMySQL==1.2.3
+
+# ---------- HTTP 客户端（调用多模态大模型） ----------
+httpx==0.28.1
+
+# ---------- 知识库构建管线（PDF 渲染 + OCR 题号定位） ----------
+pymupdf==1.28.2
+rapidocr-onnxruntime==1.2.3
+onnxruntime==1.31.0
+opencv-python==5.0.0.93
+numpy==2.5.4
+pillow==12.3.0
+
+# ---------- 测试 ----------
+pytest==9.1.1
+
+# ---------- 文档工具（可选，仅 PPT/Excel 自动化脚本需要） ----------
+python-pptx==1.0.2
+xlsxwriter==3.2.9

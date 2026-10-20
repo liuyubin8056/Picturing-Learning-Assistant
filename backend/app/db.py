@@ -27,11 +27,19 @@ _LIGHT_MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("review_status", "TEXT NOT NULL DEFAULT 'pending'"),
         ("review_note", "TEXT"),
         ("reviewed_at", "DATETIME"),
+        # 题干/解析分离裁剪（练习只展示题干图，解析图判分后才给）
+        ("stem_image_path", "TEXT"),
+        ("solution_image_path", "TEXT"),
     ],
     "questions": [
         ("feedback_options", "TEXT"),
         ("feedback_result", "TEXT"),
         ("feedback_at", "DATETIME"),
+    ],
+    "test_questions": [
+        # 组卷快照也要带分离图，否则练习时只能用含解析的整题图
+        ("stem_image_path", "TEXT"),
+        ("solution_image_path", "TEXT"),
     ],
 }
 

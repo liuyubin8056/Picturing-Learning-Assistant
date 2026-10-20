@@ -331,6 +331,42 @@ class DeepSeekClient:
         result.usage = usage
         return result
 
+    async def ask_image_custom(
+        self,
+        system: str,
+        user_text: str,
+        image_bytes: bytes,
+        mime: str = "image/jpeg",
+        max_tokens: int | None = None,
+    ) -> LLMResult:
+        """自定义 prompt 的多模态调用（如手写解答阅卷）。
+
+        与 ask_with_image 的区别：prompt 由调用方给，不走答疑的固定模板与搭车解析。
+        """
+        b64 = base64.b64encode(image_bytes).decode()
+        payload = {
+            "model": self._s.deepseek_model,
+            "messages": [
+                {"role": "system", "content": system},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": user_text},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{mime};base64,{b64}"},
+                        },
+                    ],
+                },
+            ],
+            "temperature": 0.1,
+            "max_tokens": max_tokens or self._s.deepseek_max_tokens,
+        }
+        raw, usage = await self._post(payload)
+        result = LLMResult(answer=raw.strip(), meta=None, raw=raw)
+        result.usage = usage
+        return result
+
     async def ask_text(
         self,
         system: str,
