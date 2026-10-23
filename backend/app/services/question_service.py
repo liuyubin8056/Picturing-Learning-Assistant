@@ -87,7 +87,12 @@ class QuestionService:
                 result.meta["difficulty"] = max(
                     1, min(3, int(round(result.meta["difficulty"])))
                 )
+            # 多题照片：逐题讲解单独落库，并从 meta 摘掉避免重复存储
+            probs = (result.meta or {}).pop("problems", None) if result.meta else None
+
             question.answer = result.answer
+            if isinstance(probs, list) and probs:
+                question.problems_json = json.dumps(probs, ensure_ascii=False)
             question.meta_json = (
                 json.dumps(result.meta, ensure_ascii=False) if result.meta else None
             )

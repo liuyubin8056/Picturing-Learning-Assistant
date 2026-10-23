@@ -64,6 +64,10 @@ export const submitTest = (sid, answers) =>
 export const detailedSolution = (qid) =>
   request(`/tests/questions/${qid}/detailed-solution`, { method: 'POST' })
 
+// 练习/诊断解锁状态：拍照上传过题目（有答疑记录）才解锁
+export const getUnlockStatus = (userId) =>
+  request(`/tests/users/${userId}/unlock-status`)
+
 // 看解析还不懂 → 带着困惑让模型换讲法（feedback_tags 会注入 prompt）
 export const explainQuestion = (qid, payload) =>
   request(`/tests/questions/${qid}/explain`, { method: 'POST', body: payload })

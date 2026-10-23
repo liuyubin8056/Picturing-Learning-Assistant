@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import {
   createTest, submitTest, detailedSolution, listTests,
-  explainQuestion, judgeQuestionImage,
+  explainQuestion, judgeQuestionImage, getUnlockStatus,
 } from '../api'
 import { userId } from '../store/user'
 import MarkdownView from '../components/MarkdownView.vue'
@@ -19,7 +19,11 @@ const CONFUSIONS = [
 
 const mode = ref('setup')       // setup | answering | result
 const purpose = ref('weakness')
-const count = ref(6)
+const count = ref(3)            // 题量选项：1 / 3 / 5
+
+// 解锁状态：拍照上传过题目后，薄弱/复习才可用；随机练习始终可用
+const unlocked = ref(false)
+const qaCount = ref(0)
 
 const session = ref(null)
 const answers = ref({})         // { [questionId]: { answer, self_correct } }
@@ -40,6 +44,17 @@ const tutorFollowup = ref({})   // { qid: [{tag,label}] }
 // 主观题拍照判分状态
 const judgeBusy = ref({})       // { qid: true }
 const judgeRes = ref({})        // { qid: {correct, reason, student_answer, confidence} }
+
+// 题干展示方式：默认原题图，可切文字版（{ [qid]: 'image' | 'text' }）
+const stemView = ref({})
+
+function hasStemImage(q) {
+  return !!(q.stem_image_path || q.image_path)
+}
+
+function setStemView(qid, v) {
+  stemView.value = { ...stemView.value, [qid]: v }
+}
 
 function pickJudgeFile(q) {
   document.getElementById('judge-file-' + q.id)?.click()
@@ -104,7 +119,22 @@ function followupAsk(q, opt) {
   askTutor(q, [opt.tag])
 }
 
-onMounted(loadHistory)
+onMounted(async () => {
+  await Promise.all([loadHistory(), loadUnlock()])
+})
+
+async function loadUnlock() {
+  try {
+    const r = await getUnlockStatus(userId.value)
+    unlocked.value = !!r.unlocked
+    qaCount.value = r.qa_count || 0
+    // 未解锁时只有「随机练习」可用
+    if (!unlocked.value) purpose.value = 'random'
+    else if (purpose.value === 'random') purpose.value = 'weakness'
+  } catch {
+    unlocked.value = true  // 接口异常不阻塞使用
+  }
+}
 
 async function loadHistory() {
   try {
@@ -206,19 +236,39 @@ const judgeOf = (qid) => (judgeResult.value?.detail || []).find((d) => d.questio
         </p>
 
         <h3>练习范围</h3>
+        <div v-if="!unlocked" class="banner warn" style="margin-bottom: 10px">
+          还没上传过题目，先拍一道题才能用「薄弱点攻坚 / 巩固复习」——画像需要数据。
+          现在可以先做随机练习。
+          <router-link to="/camera" style="color: var(--brand)">去拍照 →</router-link>
+        </div>
         <div class="opt-list">
-          <button class="opt" :class="{ sel: purpose === 'weakness' }" @click="purpose = 'weakness'">
-            <span class="k">●</span><span>薄弱点攻坚（优先练错得多的知识点）</span>
+          <button class="opt" :class="{ sel: purpose === 'random' }" @click="purpose = 'random'">
+            <span class="k">●</span><span>随机练习（始终可用 · 从题库随机抽题）</span>
           </button>
-          <button class="opt" :class="{ sel: purpose === 'review' }" @click="purpose = 'review'">
-            <span class="k">●</span><span>巩固复习（练掌握度较高的知识点）</span>
+          <button
+            class="opt"
+            :class="{ sel: purpose === 'weakness' }"
+            :disabled="!unlocked"
+            @click="purpose = 'weakness'"
+          >
+            <span class="k">●</span>
+            <span>薄弱点攻坚（优先练你拍照问过、错得多的知识点）{{ unlocked ? '' : ' · 待解锁' }}</span>
+          </button>
+          <button
+            class="opt"
+            :class="{ sel: purpose === 'review' }"
+            :disabled="!unlocked"
+            @click="purpose = 'review'"
+          >
+            <span class="k">●</span>
+            <span>巩固复习（练掌握度较高的知识点）{{ unlocked ? '' : ' · 待解锁' }}</span>
           </button>
         </div>
 
         <h3>题量</h3>
         <div class="btn-row">
           <button
-            v-for="c in [4, 6, 10]"
+            v-for="c in [1, 3, 5]"
             :key="c"
             class="btn"
             :class="{ primary: count === c }"
@@ -268,14 +318,19 @@ const judgeOf = (qid) => (judgeResult.value?.detail || []).find((d) => d.questio
           <span class="tag" v-for="k in (q.kp_names || [])" :key="k">{{ k }}</span>
         </div>
 
+        <!-- 题干区：图片与文字二选一，避免同一题出现两份内容不一致的题目 -->
+        <div v-if="hasStemImage(q)" class="stem-switch">
+          <button :class="{ on: stemView[q.id] !== 'text' }" @click="setStemView(q.id, 'image')">原题图</button>
+          <button :class="{ on: stemView[q.id] === 'text' }" @click="setStemView(q.id, 'text')">文字版</button>
+        </div>
         <img
-          v-if="q.stem_image_path || q.image_path"
+          v-if="hasStemImage(q) && stemView[q.id] !== 'text'"
           :src="'/' + (q.stem_image_path || q.image_path)"
           class="preview"
           style="margin-bottom: 10px"
           alt="题目图"
         />
-        <div class="stem-box"><MarkdownView :text="q.stem" /></div>
+        <div v-else class="stem-box"><MarkdownView :text="q.stem" /></div>
 
         <!-- 客观题 -->
         <template v-if="q.is_objective && q.options?.length">
@@ -498,4 +553,26 @@ const judgeOf = (qid) => (judgeResult.value?.detail || []).find((d) => d.questio
 }
 .judge-box.ok { background: var(--ok-weak); border-color: var(--ok); }
 .judge-box.err { background: var(--err-weak); border-color: var(--err); }
+
+/* 题干 图片/文字 切换 */
+.stem-switch {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.stem-switch button {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink-2);
+  border-radius: 999px;
+  padding: 3px 11px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.stem-switch button.on {
+  border-color: var(--brand);
+  color: var(--brand);
+  background: var(--brand-weak);
+}
 </style>

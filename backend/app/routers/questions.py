@@ -35,6 +35,7 @@ def to_out(q: Question, storage, duplicated: bool = False) -> QuestionOut:
         status=q.status,
         answer=q.answer,
         meta=json.loads(q.meta_json) if q.meta_json else None,
+        problems=json.loads(q.problems_json) if q.problems_json else None,
         feedback_options=json.loads(q.feedback_options) if q.feedback_options else None,
         feedback_done=q.feedback_result is not None,
         error_msg=q.error_msg,

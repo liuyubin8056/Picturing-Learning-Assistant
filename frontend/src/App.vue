@@ -35,8 +35,11 @@ window.__toast = (msg, ms = 2200) => {
       <span class="spacer"></span>
     </header>
 
+    <!-- keep-alive：切到其它页再回来，拍照/练习的进度不被清空 -->
     <router-view v-slot="{ Component }">
-      <component :is="Component" />
+      <keep-alive>
+        <component :is="Component" />
+      </keep-alive>
     </router-view>
 
     <nav class="tabbar">

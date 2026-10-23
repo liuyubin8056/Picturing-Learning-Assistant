@@ -121,8 +121,11 @@ input:focus, textarea:focus { border-color: var(--brand); }
   display: flex; gap: 10px; align-items: flex-start;
   border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
   background: #fff; cursor: pointer; font-size: 14px; text-align: left;
+  /* 防止手指滑动/拖选把相邻选项一起"带亮" */
+  user-select: none; -webkit-user-select: none; touch-action: manipulation;
 }
 .opt.sel { border-color: var(--brand); background: var(--brand-weak); }
+.opt:disabled { opacity: 0.45; cursor: not-allowed; }
 .opt .k { color: var(--brand); font-weight: 600; min-width: 18px; }
 
 .tag {

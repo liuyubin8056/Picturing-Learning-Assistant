@@ -28,7 +28,9 @@ function softBreaks(text) {
 }
 
 // ---------- 1) 数学片段抽取 ----------
-const MATH_RE = /(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|\$[^$\n]+?\$)/g
+// 行内公式允许跨行：模型/提取脚本常把长公式折行，旧正则 [^$\n] 遇到换行就整段失效，
+// 表现为公式以源码 `\int_0^\pi...` 的形式裸露在页面上。这里放宽到 [^$]，并限长防回溯。
+const MATH_RE = /(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|\$[^$]{1,1200}?\$)/g
 
 // ---------- 2) 裸 LaTeX 保守识别 ----------
 // 仅当片段"含反斜杠命令"或"含 ^/_ 加数字/字母"且不含中文时，才认为是数学。
@@ -71,7 +73,7 @@ function extractMath(text) {
 
   // 抽取后再对剩余文本做裸 LaTeX 包裹（此时已无标准定界符）
   out = wrapBareLatex(out)
-  out = out.replace(/\$([^$\n]+?)\$/g, (mm, tex) => push(tex, false))
+  out = out.replace(/\$([^$]{1,1200}?)\$/g, (mm, tex) => push(tex, false))
   return { text: out, store }
 }
 
@@ -153,9 +155,23 @@ function renderMath(store) {
   })
 }
 
+/**
+ * 修正模型输出里常见的两种"表示问题"，避免页面上出现乱码感：
+ *  1) 字面 \n（反斜杠+n）被当成正文 → 显示成可见的 "\n"
+ *     —— 只替换后面不接字母的，避免误伤 \nu \nabla \neq 等命令
+ *  2) $ 定界符数量为奇数（公式被截断）→ 后半段公式退回成源代码
+ *     —— 补一个 $ 收尾，让 KaTeX 至少能渲染出前半段
+ */
+function normalizeTex(text) {
+  let t = text.replace(/\\n(?![a-zA-Z])/g, '\n')
+  const dollars = t.replace(/\\\$/g, '').split('$').length - 1
+  if (dollars % 2 === 1) t += '$'
+  return t
+}
+
 export function renderMarkdown(md) {
   if (!md) return ''
-  const { text, store } = extractMath(softBreaks(String(md)))
+  const { text, store } = extractMath(softBreaks(normalizeTex(String(md))))
   const html = renderMd(text)
   if (!store.length) return html
   const rendered = renderMath(store) // 只渲染一次，避免替换时重复计算

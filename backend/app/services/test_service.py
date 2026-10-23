@@ -6,6 +6,7 @@
 """
 
 import json
+import random
 import re
 
 from sqlmodel import Session, select
@@ -14,6 +15,7 @@ from ..llm.deepseek import DeepSeekClient
 from ..models import (
     KBProblem,
     KnowledgePoint,
+    Question,
     TestQuestion,
     TestSession,
     WrongBook,
@@ -212,6 +214,34 @@ async def explain_with_feedback(
     }
 
 
+def user_qa_kp_ids(session: Session, user_id: int) -> list[int]:
+    """从答疑记录里提取知识点 id —— 即「用户拍照上传过的原题」覆盖的范围。
+
+    答疑 meta 存的是 kp_tags（知识点名称，模型自由生成），这里按名称反查
+    知识点表拿到 id；对不上名字的标签直接忽略（只用于排序加权，不必精确）。
+    """
+    rows = session.exec(
+        select(Question).where(
+            Question.user_id == user_id, Question.meta_json.is_not(None)
+        )
+    ).all()
+    names: set[str] = set()
+    for q in rows:
+        try:
+            meta = json.loads(q.meta_json or "{}")
+        except json.JSONDecodeError:
+            continue
+        for n in meta.get("kp_tags") or []:
+            if isinstance(n, str) and n.strip():
+                names.add(n.strip())
+    if not names:
+        return []
+    kps = session.exec(
+        select(KnowledgePoint).where(KnowledgePoint.level == 3)
+    ).all()
+    return [k.id for k in kps if k.name in names]
+
+
 def pick_knowledge_points(
     session: Session, user_id: int, purpose: str = "weakness", limit: int = 6
 ) -> list[int]:
@@ -223,9 +253,15 @@ def pick_knowledge_points(
     if stats:
         if purpose == "review":
             ranked = sorted(stats, key=lambda x: -x["score"])
-        else:
+        elif purpose == "weakness":
+            # 「薄弱练习」出题原则：用户拍照上传过的原题涉及的知识点优先，
+            # 同组内再按薄弱度排序；然后才是画像里其它薄弱知识点。
+            src = set(user_qa_kp_ids(session, user_id))
             weak = [s for s in stats if s["weak"] >= ps.WEAK_THRESHOLD]
-            ranked = weak or sorted(stats, key=lambda x: -x["weak"])
+            base = weak or stats
+            ranked = sorted(base, key=lambda s: (s["kp_id"] not in src, -s["weak"]))
+        else:
+            ranked = sorted(stats, key=lambda x: -x["weak"])
         return [s["kp_id"] for s in ranked[:limit]]
 
     # 冷启动：按题库覆盖度挑知识点（题多的先练）
@@ -245,34 +281,97 @@ def pick_knowledge_points(
     return [kp_id for kp_id, _ in sorted(counter.items(), key=lambda x: -x[1])[:limit]]
 
 
+def _pick_by_kp(
+    session: Session, kp_ids: list[int], count: int, chapter: str | None = None
+) -> list[KBProblem]:
+    """按知识点轮转抽题：先每个知识点 1 题，不够再来第二轮，直到凑够 count。
+
+    旧实现是「一个知识点只抽 1 题」，于是题目数量被知识点个数卡住——
+    选 10 题时往往只出 4~6 题（题库并不缺题）。这里改成按题量循环，
+    允许同一知识点出多道不同的题；难度仍按 3:5:2 阶梯优先匹配。
+    """
+    if not kp_ids:
+        return []
+    stmt = select(KBProblem).where(
+        KBProblem.answer.is_not(None), KBProblem.kp_ids.is_not(None)
+    )
+    if chapter:
+        stmt = stmt.where(KBProblem.chapter == chapter)
+    rows = session.exec(stmt.limit(3000)).all()
+
+    kp_set = set(kp_ids)
+    by_kp: dict[int, list[KBProblem]] = {}
+    for p in rows:
+        try:
+            ids = json.loads(p.kp_ids or "[]")
+        except json.JSONDecodeError:
+            continue
+        for kid in ids:
+            if kid in kp_set:
+                by_kp.setdefault(kid, []).append(p)
+
+    picked: list[KBProblem] = []
+    used: set[int] = set()
+    for _ in range(30):                     # 最多 30 轮，防死循环
+        if len(picked) >= count:
+            break
+        progressed = False
+        for kp in kp_ids:
+            if len(picked) >= count:
+                break
+            pool = [p for p in by_kp.get(kp, []) if p.id not in used]
+            if not pool:
+                continue
+            want = DIFFICULTY_MIX[len(picked) % len(DIFFICULTY_MIX)]
+            hit = next((p for p in pool if p.difficulty == want), pool[0])
+            picked.append(hit)
+            used.add(hit.id)
+            progressed = True
+        if not progressed:
+            break                            # 相关题库已抽完
+    return picked
+
+
+def _pick_random(
+    session: Session, count: int, chapter: str | None = None
+) -> list[KBProblem]:
+    """随机练习：不依赖画像，直接从可判分题库里抽。"""
+    stmt = select(KBProblem).where(KBProblem.answer.is_not(None))
+    if chapter:
+        stmt = stmt.where(KBProblem.chapter == chapter)
+    rows = list(session.exec(stmt.limit(3000)).all())
+    random.shuffle(rows)
+    return rows[:count]
+
+
 def build_session(
     session: Session,
     user_id: int,
     purpose: str = "weakness",
     kp_ids: list[int] | None = None,
-    count: int = 6,
+    count: int = 3,
     chapter: str | None = None,
 ) -> TestSession:
-    """组卷：从题库按知识点抽题，题面做快照。"""
-    kp_ids = kp_ids or pick_knowledge_points(session, user_id, purpose)
+    """组卷：按用途抽题（薄弱 / 复习 / 随机），题面做快照。"""
+    count = max(1, min(count, 20))
 
-    picked: list[KBProblem] = []
-    for i, kp_id in enumerate(kp_ids):
-        want = DIFFICULTY_MIX[i % len(DIFFICULTY_MIX)]
-        stmt = select(KBProblem).where(
-            KBProblem.kp_ids.is_not(None), KBProblem.answer.is_not(None)
+    if purpose == "random":
+        picked = _pick_random(session, count, chapter)
+        kp_ids = []
+    else:
+        kp_ids = kp_ids or pick_knowledge_points(
+            session, user_id, purpose, limit=max(count, 6)
         )
-        if chapter:
-            stmt = stmt.where(KBProblem.chapter == chapter)
-        rows = session.exec(stmt.limit(200)).all()
-        same = [
-            p
-            for p in rows
-            if p.kp_ids and kp_id in json.loads(p.kp_ids)
-        ]
-        hit = next((p for p in same if p.difficulty == want), None) or (same[0] if same else None)
-        if hit and hit.id not in {p.id for p in picked}:
-            picked.append(hit)
+        picked = _pick_by_kp(session, kp_ids, count, chapter)
+        # 知识点覆盖不足时用随机题补齐，避免「选 5 题只出 2 题」
+        if len(picked) < count:
+            used = {p.id for p in picked}
+            extra = [
+                p for p in _pick_random(session, count * 3, chapter) if p.id not in used
+            ]
+            picked.extend(extra[: count - len(picked)])
+
+    picked = picked[:count]
 
     if not picked:  # 题库为空或无匹配 → 建空会话，前端提示先做题库
         s = TestSession(
@@ -322,7 +421,6 @@ def build_session(
     session.commit()
     session.refresh(ts)
     return ts
-
 
 def _normalize(text: str | None) -> str:
     """答案归一化：去空白、统一大小写与常见符号，便于匹配判分。"""

@@ -1,14 +1,13 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
-import { getWrongbook, markMastered, getTokens, getKbStats, getProfile, listQuestions, listTests } from '../api'
+import { getWrongbook, markMastered, getProfile, listQuestions, listTests } from '../api'
 import { userId, setUserId } from '../store/user'
 import MarkdownView from '../components/MarkdownView.vue'
 
-const tab = ref('wrong')        // wrong | stats
+const tab = ref('wrong')        // wrong | profile
 const wrong = ref({ stats: {}, items: [] })
 const filter = ref('')          // '' | pending | mastered
-const tokens = ref(null)
-const kb = ref(null)
+const profileMd = ref('')
 const overview = ref({ questions: 0, tests: 0, signals: 0, weak: 0 })
 const loading = ref(true)
 const uidInput = ref(String(userId.value))
@@ -21,8 +20,6 @@ async function load() {
   loading.value = true
   try {
     wrong.value = await getWrongbook(userId.value, filter.value || undefined)
-    tokens.value = await getTokens(userId.value).catch(() => null)
-    kb.value = await getKbStats().catch(() => null)
     // 数据总览：让"我的数据在哪"一目了然
     const [qs, ts, prof] = await Promise.all([
       listQuestions(userId.value, 100).catch(() => []),
@@ -35,6 +32,7 @@ async function load() {
       signals: prof?.radar?.signal_count || 0,
       weak: (prof?.radar?.weak_points || []).length,
     }
+    profileMd.value = prof?.markdown || ''
   } finally {
     loading.value = false
   }
@@ -59,14 +57,6 @@ function applyUser(id) {
   load()
 }
 
-const scenes = computed(() => {
-  const s = tokens.value?.scenes || {}
-  return Object.entries(s).map(([k, v]) => ({
-    key: k,
-    label: { qa: '拍照答疑', diagnose: '诊断报告', test_explain: '题目详解', context_probe: '上下文实验' }[k] || k,
-    ...v,
-  }))
-})
 </script>
 
 <template>
@@ -114,7 +104,7 @@ const scenes = computed(() => {
 
     <div class="btn-row" style="margin-bottom: 12px">
       <button class="btn" :class="{ primary: tab === 'wrong' }" @click="tab = 'wrong'">错题本</button>
-      <button class="btn" :class="{ primary: tab === 'stats' }" @click="tab = 'stats'">数据 &amp; 成本</button>
+      <button class="btn" :class="{ primary: tab === 'profile' }" @click="tab = 'profile'">我的画像</button>
     </div>
 
     <div v-if="loading" class="card loading"><div class="spinner"></div>加载中…</div>
@@ -166,39 +156,17 @@ const scenes = computed(() => {
       </div>
     </template>
 
-    <!-- 数据与成本 -->
+    <!-- 我的画像（原「数据 & 成本」位置） -->
     <template v-else>
-      <div class="card" v-if="kb">
-        <h2>知识库规模</h2>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px">
-          <div><div class="muted">章节</div><b>{{ kb.knowledge_points?.chapters }} 章 / {{ kb.knowledge_points?.sections }} 节</b></div>
-          <div><div class="muted">知识点</div><b>{{ kb.knowledge_points?.points }} 个</b></div>
-          <div><div class="muted">题库</div><b>{{ kb.problems }} 道</b></div>
-          <div><div class="muted">可自动判分</div><b>{{ kb.objective }} 道</b></div>
+      <div class="card" v-if="profileMd">
+        <h2>📝 我的画像</h2>
+        <div class="answer" style="max-height: none">
+          <MarkdownView :text="profileMd" />
         </div>
       </div>
-
-      <div class="card" v-if="tokens">
-        <h2>Token 消耗（我的）</h2>
-        <div v-if="!scenes.length" class="muted">暂无调用记录。</div>
-        <div v-else>
-          <div v-for="s in scenes" :key="s.key" style="padding: 8px 0; border-bottom: 1px solid var(--line)">
-            <div style="display: flex; gap: 8px; align-items: center">
-              <b style="flex: 1; font-size: 14px">{{ s.label }}</b>
-              <span class="tag">{{ s.calls }} 次调用</span>
-            </div>
-            <div class="muted" style="font-size: 12px">
-              单次均 {{ s.avg_per_call }} tok · 推理占比 {{ s.reasoning_share }}%
-              <template v-if="s.cache_hit_rate != null"> · 缓存命中 {{ s.cache_hit_rate }}%</template>
-              <template v-if="s.avg_latency_ms"> · 平均 {{ (s.avg_latency_ms / 1000).toFixed(1) }}s</template>
-            </div>
-          </div>
-          <p class="muted" style="margin-bottom: 0; margin-top: 10px">
-            累计 {{ tokens.total_calls }} 次调用 / {{ tokens.total_tokens }} token
-          </p>
-        </div>
+      <div v-else class="card muted">
+        还没有生成画像。去「拍照」问一道题并提交反馈，或做一次「练习」后，这里会出现你的专属画像。
       </div>
-      <div v-else class="card muted">本地未记录到 token 数据（可能后端未启用计量或尚无调用）。</div>
     </template>
   </div>
 </template>

@@ -35,6 +35,8 @@ _LIGHT_MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("feedback_options", "TEXT"),
         ("feedback_result", "TEXT"),
         ("feedback_at", "DATETIME"),
+        # 多题照片的逐题讲解（前端详解上方的题号切换按钮）
+        ("problems_json", "TEXT"),
     ],
     "test_questions": [
         # 组卷快照也要带分离图，否则练习时只能用含解析的整题图

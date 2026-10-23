@@ -25,6 +25,9 @@ ANSWER_SYSTEM_PROMPT = """你是「智能拍照学习助手」的答疑老师，
 3. 严格只输出一个 JSON 对象，不要输出 markdown 代码块标记或其他任何文字，结构如下：
 {
   "answer": "……分步讲解……",
+  "problems": [
+    {"no": "1", "title": "8字内概括", "answer": "该题完整分步讲解"}
+  ],
   "meta": {
     "subject": "学科，如：数学",
     "chapter": "章节，如：二次函数",
@@ -37,8 +40,13 @@ ANSWER_SYSTEM_PROMPT = """你是「智能拍照学习助手」的答疑老师，
     "profile_delta": {"confusion": "学生可能的困惑点", "hint": "下次讲解建议"}
   }
 }
-4. meta 用于学习诊断，尽力填写；不确定的字段填空字符串或空数组，不要编造。
-5. **格式约束**：answer 与 meta 的所有文本内容中，禁止使用英文双引号 " 和反斜杠以外的特殊转义；需要引用词语时请用中文引号「」。违反会导致你的输出无法被解析。
+4. **一图多题的处理（重要）**：
+   - 照片里只有一道题时，problems 只放一项，其 answer 与顶层 answer 内容一致；
+   - 照片里有多道题时，problems 逐题给出完整讲解（每题的 answer 同样遵守第 2 条排版要求），
+     no 用题号或序号（如 "1"、"(2)"），title 用 8 字以内概括（如「求极限」「判断收敛」）；
+     此时顶层 answer 写一句总览，如「本页共 3 题，可在上方切换查看」。
+5. meta 用于学习诊断，尽力填写；不确定的字段填空字符串或空数组，不要编造。
+6. **格式约束**：answer 与 meta 的所有文本内容中，禁止使用英文双引号 " 和反斜杠以外的特殊转义；需要引用词语时请用中文引号「」。违反会导致你的输出无法被解析。
 
 关于 feedback_options（学生看完答案后可选的「我不会的原因」多选项，用于生成个性化画像）：
 - 给 4~6 个候选，按本题最可能的原因排序；label 要具体（如"没记住洛必达法则的适用条件"），不要写泛泛的"概念不清"。
@@ -274,9 +282,13 @@ class DeepSeekClient:
             return LLMResult(answer=raw.strip(), meta=None, raw=raw)
         answer = str(obj.get("answer") or "").strip() or raw.strip()
         meta = obj.get("meta")
-        return LLMResult(
-            answer=answer, meta=meta if isinstance(meta, dict) else None, raw=raw
-        )
+        if not isinstance(meta, dict):
+            meta = {}
+        # 多题照片的逐题讲解：随 meta 带出，service 层单独落库
+        probs = obj.get("problems")
+        if isinstance(probs, list) and probs:
+            meta["problems"] = probs
+        return LLMResult(answer=answer, meta=meta or None, raw=raw)
 
     async def _post(self, payload: dict) -> tuple[str, dict]:
         """统一发请求，返回 (正文, usage)。"""

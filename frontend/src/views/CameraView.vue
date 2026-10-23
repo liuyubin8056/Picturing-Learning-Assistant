@@ -21,6 +21,19 @@ const fbResult = ref(null)
 const options = computed(() => result.value?.feedback_options || [])
 const answerText = computed(() => result.value?.answer || '')
 
+// 一图多题：逐题讲解 + 题号切换（单题时不显示按钮）
+const activeProblem = ref(0)
+const problems = computed(() => {
+  const ps = result.value?.problems
+  return Array.isArray(ps) ? ps.filter((p) => p && (p.answer || p.title)) : []
+})
+const shownAnswer = computed(() => {
+  const ps = problems.value
+  if (!ps.length) return result.value?.answer || ''
+  const p = ps[Math.min(activeProblem.value, ps.length - 1)]
+  return p?.answer || result.value?.answer || ''
+})
+
 function chooseFile() {
   fileInput.value?.click()
 }
@@ -38,6 +51,7 @@ async function onFile(e) {
   selected.value = []
   custom.value = ''
   error.value = ''
+  activeProblem.value = 0
 }
 
 async function doAsk() {
@@ -67,6 +81,7 @@ function reset() {
   selected.value = []
   custom.value = ''
   error.value = ''
+  activeProblem.value = 0
 }
 
 function toggle(tag) {
@@ -144,8 +159,25 @@ async function doFeedback(solved = false) {
     <template v-if="result && !busy">
       <div class="card">
         <h2>✅ AI 分步讲解</h2>
+
+        <!-- 一图多题：在详解上方提供题号切换 -->
+        <div v-if="problems.length > 1" class="problem-tabs">
+          <button
+            v-for="(p, i) in problems"
+            :key="i"
+            class="ptab"
+            :class="{ on: activeProblem === i }"
+            @click="activeProblem = i"
+          >
+            第 {{ p.no || i + 1 }} 题<template v-if="p.title"><span class="pt">· {{ p.title }}</span></template>
+          </button>
+        </div>
+        <div v-else-if="problems.length === 1 && result.answer && problems[0].answer" class="banner" style="margin-bottom: 8px">
+          照片识别到 1 道题
+        </div>
+
         <div class="answer">
-          <MarkdownView :text="result.answer || ''" />
+          <MarkdownView :text="shownAnswer" />
         </div>
       </div>
 
@@ -161,16 +193,22 @@ async function doFeedback(solved = false) {
 
         <template v-if="!fbDone">
           <div v-if="options.length" class="opt-list">
-            <button
+            <!-- 用原生 checkbox 承载选中态：移动端手指滑动不会连续触发多个选项 -->
+            <label
               v-for="o in options"
               :key="o.tag"
               class="opt"
               :class="{ sel: selected.includes(o.tag) }"
-              @click="toggle(o.tag)"
             >
+              <input
+                type="checkbox"
+                hidden
+                :checked="selected.includes(o.tag)"
+                @change="toggle(o.tag)"
+              />
               <span class="k">{{ selected.includes(o.tag) ? '✓' : '+' }}</span>
               <span>{{ o.label }}</span>
-            </button>
+            </label>
           </div>
           <p v-else class="muted">（本题未生成候选选项，可直接在下方描述）</p>
 
@@ -192,3 +230,36 @@ async function doFeedback(solved = false) {
     </template>
   </div>
 </template>
+
+<style scoped>
+/* 一图多题：题号切换条 */
+.problem-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--line);
+}
+.ptab {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink-2);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ptab.on {
+  border-color: var(--brand);
+  color: var(--brand);
+  background: var(--brand-weak);
+  font-weight: 600;
+}
+.ptab .pt { opacity: 0.75; font-weight: 400; }
+</style>

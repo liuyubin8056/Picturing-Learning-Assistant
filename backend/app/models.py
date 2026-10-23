@@ -38,6 +38,8 @@ class Question(SQLModel, table=True):
     image_path: str  # 存储后端返回的文件名（相对 UPLOAD_DIR）
     status: str = Field(default="pending", index=True)  # pending / answered / failed
     answer: str | None = None  # 答疑正文
+    # 多题照片：逐题讲解 [{no, title, answer}]；单题时为空（用 answer 即可）
+    problems_json: str | None = None
     meta_json: str | None = None  # 搭车打标原始 JSON（二期消费）
     # 学生互动反馈：答疑时模型预生成的错因候选 + 用户提交结果
     feedback_options: str | None = None

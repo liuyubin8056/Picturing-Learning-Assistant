@@ -4,12 +4,12 @@ import json
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from ..config import get_settings
 from ..db import get_session
 from ..llm.deepseek import DeepSeekClient, LLMCallError, LLMNotConfiguredError
-from ..models import TestQuestion, TestSession
+from ..models import Question, TestQuestion, TestSession
 from ..services import test_service as tes
 from ..services import wrongbook_service as wbs
 from ..services.token_service import record_usage
@@ -81,7 +81,7 @@ def _q_to_dict(session: Session, tq: TestQuestion, with_answer: bool = False) ->
 @router.post("/users/{user_id}/sessions", summary="按薄弱点组卷")
 def create_session(
     user_id: int,
-    purpose: str = Query("weakness", pattern="^(weakness|review|chapter)$"),
+    purpose: str = Query("weakness", pattern="^(weakness|review|chapter|random)$"),
     count: int = Query(6, ge=1, le=20),
     chapter: str | None = None,
     session: Session = Depends(get_session),
@@ -252,6 +252,19 @@ async def explain(
     )
     session.commit()
     return out
+
+
+@router.get("/users/{user_id}/unlock-status", summary="练习与诊断的解锁状态")
+def unlock_status(user_id: int, session: Session = Depends(get_session)):
+    """规则：先拍照上传过题目（有一条答疑记录），才解锁练习与诊断。
+
+    这样新用户的第一步一定是"拍一道不会的题"，画像才有数据源，
+    后续的薄弱组卷与诊断报告才有意义。
+    """
+    qa = session.exec(
+        select(func.count()).select_from(Question).where(Question.user_id == user_id)
+    ).one()
+    return {"qa_count": qa, "unlocked": qa > 0}
 
 
 @router.get("/users/{user_id}/sessions", summary="自测历史")
