@@ -17,8 +17,9 @@ from sqlmodel import Session, select
 
 from ..config import get_settings
 from ..db import get_session
+from ..deps import current_user, ensure_owner, ensure_self
 from ..llm.deepseek import DeepSeekClient, LLMCallError, LLMNotConfiguredError
-from ..models import Question
+from ..models import Question, User
 from ..schemas import QuestionOut
 from ..services.question_service import MAX_IMAGE_BYTES, QuestionService
 from ..storage import get_storage
@@ -58,8 +59,10 @@ async def create_question(
     image: UploadFile = File(..., description="题目照片"),
     user_id: int = Form(...),
     client_question_id: str = Form(..., description="端侧幂等 ID（UUID）"),
+    me: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
+    uid = ensure_owner(user_id, me)
     # 上传体积前置检查（避免先整读超大文件）
     if image.size is not None and image.size > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=422, detail="图片超过 10MB 上限")
@@ -107,7 +110,7 @@ def get_question(question_id: int, session: Session = Depends(get_session)):
     summary="用户的提问历史（倒序分页）",
 )
 def list_questions(
-    user_id: int,
+    uid: int = Depends(ensure_self),
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
@@ -115,7 +118,7 @@ def list_questions(
     storage = get_storage()
     stmt = (
         select(Question)
-        .where(Question.user_id == user_id)
+        .where(Question.user_id == uid)
         .order_by(Question.id.desc())
         .offset(offset)
         .limit(limit)

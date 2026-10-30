@@ -9,7 +9,8 @@ from sqlmodel import Session, func, select
 from ..config import get_settings
 from ..db import get_session
 from ..llm.deepseek import DeepSeekClient, LLMCallError, LLMNotConfiguredError
-from ..models import Question, TestQuestion, TestSession
+from ..deps import current_user, ensure_owner, ensure_self
+from ..models import Question, TestQuestion, TestSession, User
 from ..services import test_service as tes
 from ..services import wrongbook_service as wbs
 from ..services.token_service import record_usage
@@ -41,6 +42,25 @@ def _session_or_404(session: Session, sid: int) -> TestSession:
     if ts is None:
         raise HTTPException(status_code=404, detail="自测会话不存在")
     return ts
+
+
+def _owned_session(session: Session, sid: int, me: User) -> TestSession:
+    """会话必须属于当前用户（演示账号放行）。"""
+    ts = _session_or_404(session, sid)
+    if not me.is_demo and ts.user_id != me.id:
+        raise HTTPException(status_code=403, detail="无权访问他人练习")
+    return ts
+
+
+def _owned_tq(session: Session, qid: int, me: User) -> TestQuestion:
+    """题目经由所属会话判定归属。"""
+    tq = session.get(TestQuestion, qid)
+    if tq is None:
+        raise HTTPException(status_code=404, detail="题目不存在")
+    ts = session.get(TestSession, tq.session_id)
+    if not me.is_demo and (ts is None or ts.user_id != me.id):
+        raise HTTPException(status_code=403, detail="无权访问他人题目")
+    return tq
 
 
 def _q_to_dict(session: Session, tq: TestQuestion, with_answer: bool = False) -> dict:
@@ -80,13 +100,13 @@ def _q_to_dict(session: Session, tq: TestQuestion, with_answer: bool = False) ->
 
 @router.post("/users/{user_id}/sessions", summary="按薄弱点组卷")
 def create_session(
-    user_id: int,
+    uid: int = Depends(ensure_self),
     purpose: str = Query("weakness", pattern="^(weakness|review|chapter|random)$"),
     count: int = Query(6, ge=1, le=20),
     chapter: str | None = None,
     session: Session = Depends(get_session),
 ):
-    ts = tes.build_session(session, user_id, purpose=purpose, count=count, chapter=chapter)
+    ts = tes.build_session(session, uid, purpose=purpose, count=count, chapter=chapter)
     qs = session.exec(
         select(TestQuestion)
         .where(TestQuestion.session_id == ts.id)
@@ -103,8 +123,8 @@ def create_session(
 
 
 @router.get("/sessions/{sid}", summary="查看会话与作答状态")
-def session_detail(sid: int, session: Session = Depends(get_session)):
-    ts = _session_or_404(session, sid)
+def session_detail(sid: int, me: User = Depends(current_user), session: Session = Depends(get_session)):
+    ts = _owned_session(session, sid, me)
     qs = session.exec(
         select(TestQuestion)
         .where(TestQuestion.session_id == ts.id)
@@ -124,8 +144,8 @@ def session_detail(sid: int, session: Session = Depends(get_session)):
 
 
 @router.post("/sessions/{sid}/submit", summary="提交作答：判分 + 回流画像 + 错题入库")
-def submit(sid: int, body: SubmitIn, session: Session = Depends(get_session)):
-    ts = _session_or_404(session, sid)
+def submit(sid: int, body: SubmitIn, me: User = Depends(current_user), session: Session = Depends(get_session)):
+    ts = _owned_session(session, sid, me)
     if ts.status == "submitted":
         raise HTTPException(status_code=409, detail="该会话已提交")
     answers = {a.question_id: {"answer": a.answer, "self_correct": a.self_correct} for a in body.answers}
@@ -133,10 +153,8 @@ def submit(sid: int, body: SubmitIn, session: Session = Depends(get_session)):
 
 
 @router.post("/questions/{qid}/detailed-solution", summary="按需生成详细解析（上传大模型）")
-async def detailed(qid: int, session: Session = Depends(get_session)):
-    tq = session.get(TestQuestion, qid)
-    if tq is None:
-        raise HTTPException(status_code=404, detail="题目不存在")
+async def detailed(qid: int, me: User = Depends(current_user), session: Session = Depends(get_session)):
+    tq = _owned_tq(session, qid, me)
     try:
         out = await tes.detailed_solution(
             session, tq, DeepSeekClient(get_settings())
@@ -167,6 +185,7 @@ async def judge_image(
     qid: int,
     image: UploadFile = File(..., description="学生手写解答照片"),
     user_id: int | None = Form(None),
+    me: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
     """考试式作答：主观题拍照上传，按答案匹配判分。
@@ -174,9 +193,8 @@ async def judge_image(
     判分结果写回题目并即时回流掌握度；无法判定时返回 correct=null，
     前端可回退到"自评对错"。
     """
-    tq = session.get(TestQuestion, qid)
-    if tq is None:
-        raise HTTPException(status_code=404, detail="题目不存在")
+    tq = _owned_tq(session, qid, me)
+    uid = ensure_owner(user_id, me)
 
     data = await image.read()
     if not data:
@@ -214,6 +232,7 @@ async def judge_image(
 async def explain(
     qid: int,
     payload: ExplainIn | None = None,
+    me: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
     """练习/考试中看完解析仍不理解时的求助。
@@ -221,9 +240,7 @@ async def explain(
     feedback_tags 为学生自选的困惑类型（+ 自定义），会原样注入 prompt，
     使回答针对具体卡点，而不是重复一遍通用解析。
     """
-    tq = session.get(TestQuestion, qid)
-    if tq is None:
-        raise HTTPException(status_code=404, detail="题目不存在")
+    tq = _owned_tq(session, qid, me)
     p = payload or ExplainIn()
     try:
         out = await tes.explain_with_feedback(
@@ -255,23 +272,23 @@ async def explain(
 
 
 @router.get("/users/{user_id}/unlock-status", summary="练习与诊断的解锁状态")
-def unlock_status(user_id: int, session: Session = Depends(get_session)):
+def unlock_status(uid: int = Depends(ensure_self), session: Session = Depends(get_session)):
     """规则：先拍照上传过题目（有一条答疑记录），才解锁练习与诊断。
 
     这样新用户的第一步一定是"拍一道不会的题"，画像才有数据源，
     后续的薄弱组卷与诊断报告才有意义。
     """
     qa = session.exec(
-        select(func.count()).select_from(Question).where(Question.user_id == user_id)
+        select(func.count()).select_from(Question).where(Question.user_id == uid)
     ).one()
     return {"qa_count": qa, "unlocked": qa > 0}
 
 
 @router.get("/users/{user_id}/sessions", summary="自测历史")
-def list_sessions(user_id: int, limit: int = Query(10, ge=1, le=50), session: Session = Depends(get_session)):
+def list_sessions(uid: int = Depends(ensure_self), limit: int = Query(10, ge=1, le=50), session: Session = Depends(get_session)):
     rows = session.exec(
         select(TestSession)
-        .where(TestSession.user_id == user_id)
+        .where(TestSession.user_id == uid)
         .order_by(TestSession.created_at.desc())
         .limit(limit)
     ).all()
@@ -295,25 +312,25 @@ def list_sessions(user_id: int, limit: int = Query(10, ge=1, le=50), session: Se
 
 @wb_router.get("/users/{user_id}", summary="错题列表（可筛选）")
 def list_wrong(
-    user_id: int,
+    uid: int = Depends(ensure_self),
     status: str | None = Query(None, pattern="^(pending|mastered)$"),
     kp_id: int | None = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     session: Session = Depends(get_session),
 ):
-    items = wbs.list_wrong(session, user_id, status=status, kp_id=kp_id, limit=limit, offset=offset)
-    return {"stats": wbs.stats(session, user_id), "items": items}
+    items = wbs.list_wrong(session, uid, status=status, kp_id=kp_id, limit=limit, offset=offset)
+    return {"stats": wbs.stats(session, uid), "items": items}
 
 
 @wb_router.put("/users/{user_id}/{wrong_id}/mastered", summary="标记已掌握/重新加入")
 def mark_mastered(
-    user_id: int,
     wrong_id: int,
+    uid: int = Depends(ensure_self),
     mastered: bool = Query(True),
     session: Session = Depends(get_session),
 ):
-    w = wbs.mark_mastered(session, user_id, wrong_id, mastered)
+    w = wbs.mark_mastered(session, uid, wrong_id, mastered)
     if w is None:
         raise HTTPException(status_code=404, detail="错题不存在")
     return {"id": w.id, "status": w.status, "mastered_at": w.mastered_at}

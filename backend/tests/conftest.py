@@ -65,3 +65,21 @@ def mock_llm(monkeypatch):
         )
 
     monkeypatch.setattr(DeepSeekClient, "ask_with_image", fake_ask)
+
+@pytest.fixture(autouse=True)
+def auto_login():
+    """默认以「演示账号」身份登录。
+
+    账户体系上线后，业务接口都依赖 current_user。原有 33 个用例直接传
+    user_id（1/7/11/98/99 等），若逐个改成带 token 调用，改动面大且易错。
+    这里统一覆盖成 is_demo=True：ensure_self 会放行任意 user_id，
+    因此老用例语义不变。权限本身（401/403）由 test_auth_guard.py 单独覆盖。
+    """
+    from app.deps import current_user
+    from app.models import User
+
+    app.dependency_overrides[current_user] = lambda: User(
+        id=1, email="test@example.com", nickname="测试", is_demo=True
+    )
+    yield
+    app.dependency_overrides.clear()

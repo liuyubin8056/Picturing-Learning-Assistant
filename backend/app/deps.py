@@ -63,3 +63,27 @@ async def optional_user(
     if not user or user.status != "active":
         return None
     return user
+
+
+def ensure_self(user_id: int, me: User = Depends(current_user)) -> int:
+    """校验路径里的 user_id，返回**有权操作的 user_id**。
+
+    用法：把接口签名里的 `user_id: int` 换成 `uid: int = Depends(ensure_self)`，
+    函数体用 uid。路径不变，前端无需改动。
+
+    例外：演示账号（is_demo）允许查看任意账号，方便汇报时切着演示。
+    """
+    if me.is_demo:
+        return user_id
+    if user_id != me.id:
+        raise HTTPException(status_code=403, detail="无权访问他人数据")
+    return user_id
+
+
+def ensure_owner(user_id: int | None, me: User) -> int:
+    """用于 Form / 请求体里自报 user_id 的接口：缺省取自己，给了就必须是自己。"""
+    if me.is_demo:
+        return user_id or me.id
+    if user_id is not None and user_id != me.id:
+        raise HTTPException(status_code=403, detail="无权操作他人数据")
+    return me.id

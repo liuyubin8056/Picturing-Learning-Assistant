@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
-import { getWrongbook, markMastered, getProfile, listQuestions, listTests } from '../api'
-import { userId, setUserId } from '../store/user'
+import { getWrongbook, markMastered, getProfile, listQuestions, listTests, setNickname } from '../api'
+import { userId, setUserId, currentUser } from '../store/user'
 import MarkdownView from '../components/MarkdownView.vue'
 
 const tab = ref('wrong')        // wrong | profile
@@ -57,25 +57,49 @@ function applyUser(id) {
   load()
 }
 
+async function editName() {
+  const name = window.prompt('新的昵称（最多 20 字）', currentUser.value?.nickname || '')
+  if (!name || !name.trim()) return
+  try {
+    const u = await setNickname(name.trim())
+    currentUser.value = u
+    window.__toast?.('昵称已更新')
+  } catch (e) {
+    window.__toast?.(e.message || '更新失败')
+  }
+}
+
 </script>
 
 <template>
   <div class="screen">
     <div class="card">
-      <h2>👤 当前用户</h2>
-      <div style="display: flex; gap: 10px">
-        <input v-model="uidInput" inputmode="numeric" placeholder="用户 ID" />
-        <button class="btn primary" style="flex: 0 0 auto" @click="applyUser(uidInput)">切换</button>
+      <h2>👤 当前账号</h2>
+      <div v-if="currentUser" style="display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap">
+        <b style="font-size: 16px">{{ currentUser.nickname || '未命名' }}</b>
+        <span class="muted" style="font-size: 12.5px">
+          {{ currentUser.email_masked || '演示账号（无需邮箱）' }}
+        </span>
+        <span v-if="currentUser.is_demo" class="tag brand">演示</span>
       </div>
       <div class="btn-row" style="margin-top: 10px">
-        <button class="btn" :disabled="userId === 1" @click="applyUser(1)">我的账号（1）</button>
-        <button class="btn" :class="{ primary: userId === DEMO_USER }" @click="applyUser(DEMO_USER)">
+        <button class="btn" @click="editName">修改昵称</button>
+        <button
+          v-if="currentUser?.is_demo"
+          class="btn"
+          :class="{ primary: userId === DEMO_USER }"
+          @click="applyUser(DEMO_USER)"
+        >
           演示数据（{{ DEMO_USER }}）
         </button>
       </div>
       <p class="muted" style="margin-bottom: 0">
-        数据保存在后端数据库（backend/dev.db）与浏览器缓存中，关掉应用不会丢失；
-        切换用户 ID 可查看不同账号的数据。
+        <template v-if="currentUser?.is_demo">
+          演示账号可切换到其它用户查看数据；正式账号只能访问自己的数据。
+        </template>
+        <template v-else>
+          数据保存在后端数据库，关掉应用或换设备后，用邮箱验证码登录即可继续。
+        </template>
       </p>
     </div>
 

@@ -9,7 +9,8 @@ from sqlmodel import Session
 
 from ..config import BASE_DIR
 from ..db import get_session
-from ..models import Question
+from ..deps import current_user, ensure_self
+from ..models import Question, User
 from ..services import profile_service as ps
 
 router = APIRouter(prefix="/api/v1/profile", tags=["个性画像"])
@@ -32,11 +33,17 @@ class ProfileOut(BaseModel):
 
 @router.post("/questions/{question_id}/feedback", summary="提交互动反馈（多选+自定义）")
 def submit_feedback(
-    question_id: int, body: FeedbackIn, session: Session = Depends(get_session)
+    question_id: int,
+    body: FeedbackIn,
+    me: User = Depends(current_user),
+    session: Session = Depends(get_session),
 ):
     q = session.get(Question, question_id)
     if q is None:
         raise HTTPException(status_code=404, detail="题目不存在")
+    # 只能给自己的答疑提交反馈（演示账号可代按）
+    if not me.is_demo and q.user_id != me.id:
+        raise HTTPException(status_code=403, detail="无权操作他人数据")
     if not body.selected and not body.custom and not body.solved:
         raise HTTPException(status_code=422, detail="请至少选择一个原因或填写自定义描述")
 
@@ -66,36 +73,36 @@ def submit_feedback(
 
 @router.get("/users/{user_id}", response_model=ProfileOut, summary="读取画像（md + 统计 + 雷达图）")
 def get_profile(
-    user_id: int,
+    uid: int = Depends(ensure_self),
     refresh: bool = Query(False, description="true 则强制重算"),
     session: Session = Depends(get_session),
 ):
-    md_file = ps.PROFILE_DIR / f"{user_id}.md"
+    md_file = ps.PROFILE_DIR / f"{uid}.md"
     if refresh or not md_file.exists():
-        ps.rebuild_profile(session, user_id)
+        ps.rebuild_profile(session, uid)
     md = md_file.read_text(encoding="utf-8") if md_file.exists() else ""
-    stats = ps.user_kp_stats(session, user_id)
-    radar = ps.radar_data(session, user_id)
-    return ProfileOut(user_id=user_id, markdown=md, radar=radar, stats=stats)
+    stats = ps.user_kp_stats(session, uid)
+    radar = ps.radar_data(session, uid)
+    return ProfileOut(user_id=uid, markdown=md, radar=radar, stats=stats)
 
 
 @router.get("/users/{user_id}/markdown", summary="下载/预览画像 md 原文")
-def get_profile_md(user_id: int, session: Session = Depends(get_session)):
-    md_file = ps.PROFILE_DIR / f"{user_id}.md"
+def get_profile_md(uid: int = Depends(ensure_self), session: Session = Depends(get_session)):
+    md_file = ps.PROFILE_DIR / f"{uid}.md"
     if not md_file.exists():
-        ps.rebuild_profile(session, user_id)
+        ps.rebuild_profile(session, uid)
     if not md_file.exists():
         raise HTTPException(status_code=404, detail="画像尚未生成")
     return FileResponse(
-        str(md_file), media_type="text/markdown", filename=f"profile_{user_id}.md"
+        str(md_file), media_type="text/markdown", filename=f"profile_{uid}.md"
     )
 
 
 @router.get("/users/{user_id}/radar", summary="雷达图 JSON（前端直接渲染）")
-def get_radar(user_id: int, session: Session = Depends(get_session)):
-    return ps.radar_data(session, user_id)
+def get_radar(uid: int = Depends(ensure_self), session: Session = Depends(get_session)):
+    return ps.radar_data(session, uid)
 
 
 @router.post("/users/{user_id}/refresh", summary="强制重建画像（自测后调用）")
-def refresh_profile(user_id: int, session: Session = Depends(get_session)):
-    return ps.rebuild_profile(session, user_id)
+def refresh_profile(uid: int = Depends(ensure_self), session: Session = Depends(get_session)):
+    return ps.rebuild_profile(session, uid)

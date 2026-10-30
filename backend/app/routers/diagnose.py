@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 
 from ..config import get_settings
 from ..db import get_session
+from ..deps import ensure_self
 from ..llm.deepseek import DeepSeekClient
 from ..models import DiagnosisReport
 from ..services import diagnose_service as ds
@@ -16,13 +17,13 @@ router = APIRouter(prefix="/api/v1/diagnose", tags=["诊断报告"])
 
 
 @router.post("/users/{user_id}", summary="生成诊断报告（规则算分 + LLM 撰写）")
-async def generate(user_id: int, use_llm: bool = Query(True), session: Session = Depends(get_session)):
+async def generate(uid: int = Depends(ensure_self), use_llm: bool = Query(True), session: Session = Depends(get_session)):
     llm = DeepSeekClient(get_settings())
-    report = await ds.generate_report(session, user_id, llm, use_llm=use_llm)
+    report = await ds.generate_report(session, uid, llm, use_llm=use_llm)
     if report.token_used:
         record_usage(
             session,
-            user_id=user_id,
+            user_id=uid,
             scene="diagnose",
             model=get_settings().deepseek_model,
             completion_tokens=report.token_used,
@@ -44,10 +45,10 @@ async def generate(user_id: int, use_llm: bool = Query(True), session: Session =
 
 
 @router.get("/users/{user_id}", summary="报告列表")
-def list_reports(user_id: int, limit: int = Query(10, ge=1, le=50), session: Session = Depends(get_session)):
+def list_reports(uid: int = Depends(ensure_self), limit: int = Query(10, ge=1, le=50), session: Session = Depends(get_session)):
     rows = session.exec(
         select(DiagnosisReport)
-        .where(DiagnosisReport.user_id == user_id)
+        .where(DiagnosisReport.user_id == uid)
         .order_by(DiagnosisReport.version.desc())
         .limit(limit)
     ).all()
@@ -67,10 +68,10 @@ def list_reports(user_id: int, limit: int = Query(10, ge=1, le=50), session: Ses
 
 
 @router.get("/users/{user_id}/latest", summary="最新报告")
-def latest(user_id: int, session: Session = Depends(get_session)):
+def latest(uid: int = Depends(ensure_self), session: Session = Depends(get_session)):
     r = session.exec(
         select(DiagnosisReport)
-        .where(DiagnosisReport.user_id == user_id)
+        .where(DiagnosisReport.user_id == uid)
         .order_by(DiagnosisReport.version.desc())
     ).first()
     if r is None:
@@ -88,9 +89,9 @@ def latest(user_id: int, session: Session = Depends(get_session)):
 
 @router.get("/users/{user_id}/compare", summary="两个版本对比")
 def compare(
-    user_id: int,
+    uid: int = Depends(ensure_self),
     from_version: int = Query(..., alias="v1"),
     to_version: int = Query(..., alias="v2"),
     session: Session = Depends(get_session),
 ):
-    return ds.compare_reports(session, user_id, from_version, to_version)
+    return ds.compare_reports(session, uid, from_version, to_version)
