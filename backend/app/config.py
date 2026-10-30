@@ -33,6 +33,27 @@ class Settings(BaseSettings):
     def llm_configured(self) -> bool:
         return bool(self.deepseek_api_key.strip())
 
+    # ---- 邮件（邮箱验证码登录）----
+    mail_provider: str = "console"       # console（验证码打日志）| smtp（真发）
+    smtp_host: str = "smtp.qq.com"
+    smtp_port: int = 465                 # QQ/163 用 465 + SSL
+    smtp_user: str = ""                  # 发信邮箱完整地址
+    smtp_pass: str = ""                  # 邮箱授权码（不是登录密码）
+    mail_from_name: str = "智能拍照学习助手"
+
+    # ---- 认证 ----
+    auth_cookie_name: str = "spl_token"
+    auth_token_days: int = 30            # 令牌有效期
+    auth_code_ttl_seconds: int = 300     # 验证码 5 分钟
+    auth_code_cooldown: int = 60         # 同邮箱重发冷却
+    allow_demo_login: bool = True        # 演示账号免登录入口（生产请关）
+
+    @property
+    def mail_configured(self) -> bool:
+        return self.mail_provider == "console" or bool(
+            self.smtp_user.strip() and self.smtp_pass.strip()
+        )
+
     @property
     def upload_path(self) -> Path:
         """上传目录绝对路径（相对 backend/，避免启动目录影响）。"""

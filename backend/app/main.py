@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .db import init_db
 from .routers import diagnose, health, kb, profile, questions, tests, tokens
+from .routers import auth as auth_router
 from .storage import get_storage
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -36,6 +37,7 @@ app.include_router(diagnose.router)   # D 诊断报告
 app.include_router(tests.router)       # E 自测练习
 app.include_router(tests.wb_router)   # F 错题本
 app.include_router(tokens.router)     # token 计量
+app.include_router(auth_router.router)  # 账户（邮箱验证码登录）
 
 # 题目图片静态服务（MVP 本地存储；get_storage 构造时确保目录存在）
 _storage = get_storage()

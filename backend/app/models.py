@@ -21,6 +21,47 @@ class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
+    # ---- 账户（邮箱验证码登录）----
+    # email 唯一性由部分索引保证（允许 NULL，兼容历史匿名账号与演示账号）
+    email: str | None = Field(default=None, index=True)
+    nickname: str | None = None
+    password_hash: str | None = None      # pbkdf2_sha256（标准库实现，无需额外依赖）
+    status: str = Field(default="active")  # active / locked / deleted
+    is_demo: bool = Field(default=False)   # 演示账号（1001），免登录进入
+    last_login_at: datetime | None = None
+
+
+class VerificationCode(SQLModel, table=True):
+    """邮箱验证码。只存 hash，库泄露也无法直接登录。"""
+
+    __tablename__ = "verification_codes"
+
+    id: int | None = Field(default=None, primary_key=True)
+    email: str = Field(index=True)          # 已规范化
+    code_hash: str
+    purpose: str = Field(default="login")    # login / reset / bind
+    expires_at: datetime
+    used: bool = Field(default=False)
+    attempts: int = Field(default=0)         # 错误次数，超 5 次作废
+    ip: str | None = None
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class AuthToken(SQLModel, table=True):
+    """登录令牌。存 hash；删除/置 revoked_at 即刻失效（支持踢设备）。"""
+
+    __tablename__ = "auth_tokens"
+
+    id: int | None = Field(default=None, primary_key=True)
+    token_hash: str = Field(index=True, unique=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    client: str = Field(default="web")       # web / app
+    expires_at: datetime = Field(index=True)
+    revoked_at: datetime | None = None
+    last_seen_at: datetime | None = None
+    device: str | None = None                # UA / 机型，用于设备管理
+    created_at: datetime = Field(default_factory=utcnow)
+
 
 class Question(SQLModel, table=True):
     """拍照题目记录。

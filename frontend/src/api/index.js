@@ -22,11 +22,32 @@ async function request(path, { method = 'GET', body, isForm } = {}) {
     data = { detail: text }
   }
   if (!res.ok) {
+    // 登录态失效：广播事件，由 App.vue 统一跳登录页（避免 api ↔ store 循环依赖）
+    if (res.status === 401 && !path.startsWith('/auth/')) {
+      window.dispatchEvent(new Event('auth:expired'))
+    }
     const msg = data?.detail || data?.message || `请求失败（HTTP ${res.status}）`
     throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg))
   }
   return data
 }
+
+// ---------- 账户（邮箱验证码登录） ----------
+// 凭证走 httpOnly Cookie（Web 端），前端不接触 token
+export const sendEmailCode = (email) =>
+  request('/auth/email/send', { method: 'POST', body: { email } })
+
+export const loginByCode = (email, code) =>
+  request('/auth/email/login', { method: 'POST', body: { email, code } })
+
+export const getMe = () => request('/auth/me')
+
+export const setNickname = (nickname) =>
+  request('/auth/me/nickname', { method: 'PUT', body: { nickname } })
+
+export const logout = () => request('/auth/logout', { method: 'POST' })
+
+export const demoLogin = () => request('/auth/demo-login', { method: 'POST' })
 
 // ---------- 答疑 ----------
 export const askQuestion = (file, userId, clientId) => {

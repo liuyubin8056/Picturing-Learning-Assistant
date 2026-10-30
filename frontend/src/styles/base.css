@@ -53,8 +53,7 @@ body {
 .appbar .logo {
   width: 32px; height: 32px; border-radius: 9px;
   background: var(--brand); color: #fff;
-  display: grid; place-items: center;
-  font-size: 17px; font-weight: 600;
+  display: grid; place-items: center;  font-size: 17px; font-weight: 600;
 }
 .appbar b { font-size: 16px; }
 .appbar small { display: block; color: var(--ink-3); font-size: 11px; line-height: 1.2; }
@@ -226,3 +225,18 @@ input:focus, textarea:focus { border-color: var(--brand); }
 }
 .banner.warn { background: var(--warn-weak); color: var(--warn); }
 .banner.err { background: var(--err-weak); color: var(--err); }
+
+/* ---------- 顶栏：当前用户与退出 ---------- */
+.appbar .who { min-width: 0; }
+.appbar .who b { display: block; font-size: 14px; line-height: 1.2; }
+.appbar .who small {
+  display: block; font-size: 11.5px; color: var(--ink-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46vw;
+}
+.appbar .logout {
+  flex: 0 0 auto;
+  border: 1px solid var(--line); background: #fff; color: var(--ink-2);
+  border-radius: 999px; padding: 4px 12px; font-size: 12px;
+  font-family: inherit; cursor: pointer;
+}
+.appbar .logout:hover { border-color: var(--brand); color: var(--brand); }

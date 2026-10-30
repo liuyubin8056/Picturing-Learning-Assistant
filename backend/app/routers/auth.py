@@ -1,0 +1,324 @@
+"""账户接口：邮箱验证码登录、密码登录、当前用户、退出、注销、演示登录。
+
+两端凭证策略见 docs/账户管理方案.md 决策 4：
+- X-Client: web（默认）→ 下发 httpOnly Cookie，响应体不含 token；
+- X-Client: app        → 返回 token 由客户端存入 Keychain / Keystore，不设 Cookie。
+"""
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
+from sqlmodel import Session, select
+
+from ..config import get_settings
+from ..db import get_session
+from ..deps import COOKIE_NAME, current_user
+from ..models import (
+    AuthToken,
+    DiagnosisReport,
+    Mastery,
+    ProfileMeta,
+    Question,
+    TestQuestion,
+    TestSession,
+    TokenUsage,
+    User,
+    WrongBook,
+    utcnow,
+)
+from ..schemas import (
+    CodeLoginIn,
+    LoginOut,
+    PasswordLoginIn,
+    SendCodeIn,
+    SendCodeOut,
+    SetNicknameIn,
+    SetPasswordIn,
+    UserOut,
+)
+from ..services import auth_service as auth
+from ..services import mailer
+
+router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+
+
+def _user_out(u: User) -> UserOut:
+    return UserOut(
+        id=u.id,
+        email=u.email,
+        email_masked=auth.mask_email(u.email) if u.email else None,
+        nickname=u.nickname,
+        is_demo=bool(u.is_demo),
+        created_at=u.created_at,
+    )
+
+
+def _set_auth_cookie(response: Response, token: str) -> None:
+    s = get_settings()
+    response.set_cookie(
+        COOKIE_NAME,
+        token,
+        max_age=s.auth_token_days * 86400,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+
+
+def _client_kind(x_client: str | None) -> str:
+    return "app" if (x_client or "").strip().lower() == "app" else "web"
+
+
+def _login_response(
+    session: Session,
+    user: User,
+    is_new: bool,
+    response: Response,
+    client: str,
+    device: str | None,
+) -> LoginOut:
+    raw, expires = auth.issue_token(session, user.id, client, device=device)
+    ttl = int((expires - utcnow()).total_seconds())
+    if client == "web":
+        _set_auth_cookie(response, raw)
+        return LoginOut(user=_user_out(user), is_new=is_new)
+    return LoginOut(user=_user_out(user), token=raw, expires_in=ttl, is_new=is_new)
+
+
+# ---------------- 验证码 ----------------
+
+@router.post("/email/send", response_model=SendCodeOut, summary="发送邮箱验证码")
+async def send_email_code(
+    payload: SendCodeIn,
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    email = auth.normalize_email(payload.email)
+    if not auth.is_valid_email(email):
+        raise HTTPException(400, "邮箱格式不正确")
+
+    ip = request.client.host if request.client else None
+    try:
+        code = auth.request_code(session, email, payload.purpose, ip=ip)
+    except ValueError as exc:
+        raise HTTPException(429, str(exc)) from exc
+
+    try:
+        delivered = await mailer.send_code(email, code, payload.purpose)
+    except mailer.MailError as exc:
+        raise HTTPException(503, f"邮件发送失败：{exc}") from exc
+
+    s = get_settings()
+    return SendCodeOut(
+        sent=True,
+        cooldown=s.auth_code_cooldown,
+        hint="验证码已发出，若 1 分钟内未收到请检查垃圾邮件",
+        # console 模式（本地开发）回显，方便不联网联调；生产走 smtp 时为 None
+        debug_code=None if delivered else code,
+    )
+
+
+@router.post("/email/login", response_model=LoginOut, summary="验证码登录（首次自动注册）")
+def login_by_code(
+    payload: CodeLoginIn,
+    request: Request,
+    response: Response,
+    x_client: str | None = Header(None),
+    session: Session = Depends(get_session),
+):
+    email = auth.normalize_email(payload.email)
+    try:
+        auth.verify_code(session, email, payload.code)
+    except ValueError as exc:
+        raise HTTPException(401, str(exc)) from exc
+
+    user, is_new = auth.get_or_create_user(session, email)
+    if user.status != "active":
+        raise HTTPException(403, "账号已被停用")
+    return _login_response(
+        session, user, is_new, response,
+        _client_kind(x_client), request.headers.get("user-agent"),
+    )
+
+
+# ---------------- 密码 ----------------
+
+@router.post("/password/login", response_model=LoginOut, summary="密码登录")
+def login_by_password(
+    payload: PasswordLoginIn,
+    request: Request,
+    response: Response,
+    x_client: str | None = Header(None),
+    session: Session = Depends(get_session),
+):
+    email = auth.normalize_email(payload.email)
+    user = auth.get_user_by_email(session, email)
+    if not user or not auth.verify_password(payload.password, user.password_hash):
+        raise HTTPException(401, "邮箱或密码不正确")
+    if user.status != "active":
+        raise HTTPException(403, "账号已被停用")
+    user.last_login_at = utcnow()
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return _login_response(
+        session, user, False, response,
+        _client_kind(x_client), request.headers.get("user-agent"),
+    )
+
+
+@router.post("/password", summary="设置或修改密码（需登录）")
+def set_password(
+    payload: SetPasswordIn,
+    me: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    pwd = payload.password or ""
+    if len(pwd) < 6:
+        raise HTTPException(400, "密码至少 6 位")
+    if len(pwd) > 128:
+        raise HTTPException(400, "密码过长")
+    me.password_hash = auth.hash_password(pwd)
+    session.add(me)
+    session.commit()
+    return {"ok": True}
+
+
+# ---------------- 当前用户 ----------------
+
+@router.get("/me", response_model=UserOut, summary="当前登录用户")
+def get_me(me: User = Depends(current_user)):
+    return _user_out(me)
+
+
+@router.put("/me/nickname", response_model=UserOut, summary="设置昵称")
+def set_nickname(
+    payload: SetNicknameIn,
+    me: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    name = (payload.nickname or "").strip()
+    if not name:
+        raise HTTPException(400, "昵称不能为空")
+    if len(name) > 20:
+        raise HTTPException(400, "昵称最多 20 个字符")
+    me.nickname = name
+    session.add(me)
+    session.commit()
+    session.refresh(me)
+    return _user_out(me)
+
+
+# ---------------- 令牌生命周期 ----------------
+
+@router.post("/refresh", summary="续期（App 端滑动续期）")
+def refresh(
+    request: Request,
+    response: Response,
+    x_client: str | None = Header(None),
+    session: Session = Depends(get_session),
+):
+    from ..deps import _extract  # 复用同一套"Cookie 或 Bearer"解析
+
+    token = _extract(request.cookies.get(COOKIE_NAME), request.headers.get("authorization"))
+    row = auth.lookup_token(session, token) if token else None
+    if not row:
+        raise HTTPException(401, "登录已失效，请重新登录")
+    user = session.get(User, row.user_id)
+    if not user:
+        raise HTTPException(401, "账号不存在")
+    auth.revoke_token(session, token)                 # 换新令牌，旧的立即作废
+    return _login_response(
+        session, user, False, response,
+        _client_kind(x_client), request.headers.get("user-agent"),
+    )
+
+
+@router.post("/logout", summary="退出登录（撤销当前令牌）")
+def logout(
+    request: Request,
+    response: Response,
+    session: Session = Depends(get_session),
+):
+    from ..deps import _extract
+
+    token = _extract(request.cookies.get(COOKIE_NAME), request.headers.get("authorization"))
+    if token:
+        auth.revoke_token(session, token)
+    response.delete_cookie(COOKIE_NAME, path="/")
+    return {"ok": True}
+
+
+@router.post("/logout-all", summary="退出所有设备")
+def logout_all(
+    me: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    n = auth.revoke_all_tokens(session, me.id)
+    return {"ok": True, "revoked": n}
+
+
+# ---------------- 演示账号 ----------------
+
+@router.post("/demo-login", response_model=LoginOut, summary="演示账号免登录（仅演示环境）")
+def demo_login(
+    request: Request,
+    response: Response,
+    x_client: str | None = Header(None),
+    session: Session = Depends(get_session),
+):
+    s = get_settings()
+    if not s.allow_demo_login:
+        raise HTTPException(403, "演示登录已关闭")
+    demo = session.get(User, 1001)
+    if not demo:
+        raise HTTPException(404, "演示账号不存在（先运行种子脚本）")
+    return _login_response(
+        session, demo, False, response,
+        _client_kind(x_client), request.headers.get("user-agent"),
+    )
+
+
+# ---------------- 注销账号 ----------------
+
+@router.delete("/account", summary="注销账号并清除学习数据")
+def delete_account(
+    me: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    if me.is_demo:
+        raise HTTPException(400, "演示账号不可注销")
+
+    uid = me.id
+    # 级联清理学习数据（业务表都以 user_id 关联）
+    for model in (Question, Mastery, WrongBook, DiagnosisReport, TokenUsage):
+        for row in session.exec(select(model).where(model.user_id == uid)).all():
+            session.delete(row)
+    for ts in session.exec(select(TestSession).where(TestSession.user_id == uid)).all():
+        for tq in session.exec(
+            select(TestQuestion).where(TestQuestion.session_id == ts.id)
+        ).all():
+            session.delete(tq)
+        session.delete(ts)
+    pm = session.get(ProfileMeta, uid)
+    if pm:
+        session.delete(pm)
+    for tok in session.exec(select(AuthToken).where(AuthToken.user_id == uid)).all():
+        session.delete(tok)
+
+    # 画像 md 存档
+    try:
+        from ..config import BASE_DIR
+
+        md = BASE_DIR / "profiles" / f"{uid}.md"
+        if md.exists():
+            md.unlink()
+    except OSError:
+        pass
+
+    # 软删除用户本身：邮箱置空释放唯一约束，便于同一邮箱重新注册
+    me.status = "deleted"
+    me.email = None
+    me.nickname = None
+    me.password_hash = None
+    session.add(me)
+    session.commit()
+    return {"ok": True}
