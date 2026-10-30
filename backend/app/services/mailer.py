@@ -5,7 +5,6 @@
 """
 
 import logging
-from email.header import Header
 from email.message import EmailMessage
 
 from ..config import get_settings
@@ -49,7 +48,9 @@ async def send_code(to: str, code: str, purpose: str = "login") -> bool:
         raise MailError("缺少 aiosmtplib，请执行 pip install aiosmtplib") from exc
 
     msg = EmailMessage()
-    msg["Subject"] = Header(f"【智能拍照学习助手】{label}验证码", "utf-8")
+    # 直接用 str：EmailMessage（policy=default）会按 RFC 2047 自动编码中文主题；
+    # 若传 email.header.Header 会报 "'Header' object is not subscriptable"
+    msg["Subject"] = f"【智能拍照学习助手】{label}验证码"
     msg["From"] = f"{s.mail_from_name} <{s.smtp_user}>"
     msg["To"] = to
     msg.set_content(
