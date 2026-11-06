@@ -1,0 +1,43 @@
+[Unit]
+Description=LearnMate API (FastAPI) — 智能拍照学习助手
+Documentation=https://github.com/liuyubin8056/Picturing-Learning-Assistant
+After=network.target
+
+[Service]
+Type=simple
+User=learnmate
+Group=learnmate
+WorkingDirectory=/opt/learnmate/backend
+EnvironmentFile=/opt/learnmate/backend/.env
+
+# 单 worker：SQLite 并发写能力有限，多进程反而容易 database is locked。
+# 2 核机器上单进程足够支撑几十并发（瓶颈在大模型那 30~90 秒）。
+ExecStart=/opt/learnmate/backend/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --workers 1 \
+    --limit-concurrency 64 \
+    --timeout-keep-alive 75 \
+    --proxy-headers \
+    --forwarded-allow-ips=127.0.0.1
+
+Restart=always
+RestartSec=3
+
+# 内存护栏：2G 机器上超限只杀掉本服务，不拖垮整机（不会被 OOM 连带 kill nginx/ssh）
+MemoryMax=1100M
+
+# 日志进 journald，用 journalctl -u learnmate -f 查看
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=learnmate
+
+# ---------- 安全加固 ----------
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/learnmate/backend
+
+[Install]
+WantedBy=multi-user.target

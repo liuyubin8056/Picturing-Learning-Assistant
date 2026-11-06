@@ -1,0 +1,24 @@
+# 运行时依赖（服务器只需这些）
+# ------------------------------------------------------------------
+# 与 backend/requirements.txt 的区别：
+#   建库脚本用的重型依赖（onnxruntime / opencv / rapidocr / pymupdf /
+#   numpy / pillow）在 app/ 里没有任何 import，公网服务不需要它们。
+#   2 核 2G 的学生机上，光 onnxruntime + opencv 就要吃掉 300MB+ 内存
+#   和 500MB 磁盘，装上去纯属浪费。
+# 需要重建知识库时才用 requirements.txt。
+# ------------------------------------------------------------------
+
+fastapi==0.143.0
+uvicorn[standard]==0.54.0
+python-multipart==0.0.32
+pydantic==2.14.0
+pydantic-settings==2.15.0
+python-dotenv==1.2.4
+sqlmodel==0.0.48
+SQLAlchemy==2.1.4
+# 切换 MySQL 时才需要，用 SQLite 可留（体积很小）
+PyMySQL==1.2.3
+# 邮箱验证码登录
+aiosmtplib==3.0.2
+# 调用大模型
+httpx==0.28.1
