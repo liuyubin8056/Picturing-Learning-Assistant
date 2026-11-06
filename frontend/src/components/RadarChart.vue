@@ -12,14 +12,19 @@ const props = defineProps({
 })
 const emit = defineEmits(['select'])
 
-// 画布：宽高分别留出标签区（左右约 150px、上下约 60px）
-const W = 440
-const H = 400
+// 画布：宽高分别留出标签区（左右约 160px、上下约 60px）
+const W = 480
+const H = 420
 const CX = W / 2
-const CY = H / 2 - 5
-const R = 100            // 数据区半径
-const LR = R + 46        // 标签位置半径
+const CY = H / 2
+const R = 106 // 数据区半径
+const LR = R + 48 // 标签位置半径
 const LEVELS = 4
+
+// 每个实例独立的渐变 id，避免同页两个雷达图互相串色
+const uid = Math.random().toString(36).slice(2, 7)
+const fillId = `radar-fill-${uid}`
+const glowId = `radar-glow-${uid}`
 
 const n = computed(() => Math.max(props.axes.length, 3))
 
@@ -64,11 +69,14 @@ const dataPoly = computed(() => {
     .join(' ')
 })
 
+// 未练且为 0 的轴不画点：否则所有点会重叠在圆心，显得脏
 const dots = computed(() =>
-  props.axes.map((ax, i) => {
-    const [x, y] = point(i, ax.value, props.axes.length)
-    return { x, y, v: ax.value, practiced: ax.practiced !== false }
-  })
+  props.axes
+    .map((ax, i) => {
+      const [x, y] = point(i, ax.value, props.axes.length)
+      return { x, y, v: ax.value, practiced: ax.practiced !== false }
+    })
+    .filter((d) => d.practiced || d.v > 0.02)
 )
 
 // 「第十二章  常微分方程」→ 章号 + 名称，便于分行显示
@@ -80,14 +88,13 @@ function splitLabel(name) {
 }
 
 function clip(s, len) {
-  // 截断后追加省略号，总长仍受 len 约束（否则会超出宽度限制）
   return s.length > len ? s.slice(0, len - 1) + '…' : s
 }
 
 // 标签限制：轴多时更短，避免相邻标签相撞
 const bodyLimit = computed(() => {
   const n = props.axes.length
-  if (n > 8) return 5
+  if (n > 8) return 6
   if (n <= 3) return 6
   return 7
 })
@@ -106,7 +113,7 @@ const labels = computed(() =>
       ? [head, clip(body, bodyLimit.value), ax.value.toFixed(2)]
       : [clip(body, bodyLimit.value), ax.value.toFixed(2)]
     return {
-      x: x + side * 8,
+      x: x + side * 9,
       y,
       rows,
       practiced,
@@ -115,6 +122,19 @@ const labels = computed(() =>
     }
   })
 )
+
+const ariaLabel = computed(() => {
+  if (!props.axes.length) return '暂无掌握度数据'
+  const avg = props.axes.reduce((a, b) => a + b.value, 0) / props.axes.length
+  return `掌握度雷达图，共 ${props.axes.length} 个章节，平均掌握度 ${avg.toFixed(2)}`
+})
+
+function rowFill(l, ri) {
+  if (!l.practiced) return 'var(--ink-3)'
+  const isValue = ri === l.rows.length - 1
+  if (isValue) return props.interactive ? 'var(--brand)' : 'var(--ink-2)'
+  return ri === 0 && l.rows.length === 3 ? 'var(--ink-3)' : 'var(--ink-2)'
+}
 </script>
 
 <template>
@@ -124,16 +144,32 @@ const labels = computed(() =>
       class="radar-svg"
       :style="{ maxWidth: maxWidth + 'px' }"
       role="img"
-      aria-label="掌握度雷达图"
+      :aria-label="ariaLabel"
     >
+      <defs>
+        <linearGradient :id="fillId" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="var(--brand)" stop-opacity="0.34" />
+          <stop offset="100%" stop-color="var(--brand-2)" stop-opacity="0.05" />
+        </linearGradient>
+        <radialGradient :id="glowId">
+          <stop offset="0%" stop-color="var(--brand)" stop-opacity="0.1" />
+          <stop offset="100%" stop-color="var(--brand)" stop-opacity="0" />
+        </radialGradient>
+      </defs>
+
+      <!-- 圆心柔光，让数据区有层次 -->
+      <circle :cx="CX" :cy="CY" :r="R * 0.98" :fill="`url(#${glowId})`" />
+
       <!-- 网格 -->
       <polygon
         v-for="(p, i) in gridPolys"
         :key="'g' + i"
         :points="p"
         fill="none"
-        stroke="#e5e9f2"
+        stroke="var(--line)"
         stroke-width="1"
+        :stroke-opacity="i === gridPolys.length - 1 ? 1 : 0.7"
+        vector-effect="non-scaling-stroke"
       />
       <!-- 轴线 -->
       <line
@@ -143,32 +179,41 @@ const labels = computed(() =>
         :y1="CY"
         :x2="s.x"
         :y2="s.y"
-        stroke="#e5e9f2"
+        stroke="var(--line)"
         stroke-width="1"
+        stroke-opacity="0.75"
+        vector-effect="non-scaling-stroke"
       />
+
       <!-- 数据面 -->
       <polygon
         v-if="dataPoly"
         :points="dataPoly"
-        fill="rgba(47,107,255,0.18)"
-        stroke="#2f6bff"
+        :fill="`url(#${fillId})`"
+        stroke="var(--brand)"
         stroke-width="2"
         stroke-linejoin="round"
+        vector-effect="non-scaling-stroke"
       />
+
+      <!-- 数据点：白色描边让小圆点更干净 -->
       <circle
         v-for="(d, i) in dots"
         :key="'d' + i"
         :cx="d.x"
         :cy="d.y"
-        r="3.5"
-        :fill="d.practiced ? '#2f6bff' : '#c3cbd9'"
+        r="4"
+        :fill="d.practiced ? 'var(--brand)' : 'var(--ink-3)'"
+        stroke="var(--card)"
+        stroke-width="1.8"
       />
 
       <!-- 轴标签（interactive 时可点击下钻） -->
       <g
         v-for="(l, i) in labels"
         :key="'l' + i"
-        :class="{ clickable: interactive }"
+        class="lbl-group"
+        :class="{ clickable: interactive, off: !l.practiced }"
         @click="interactive && emit('select', l.idx)"
       >
         <text
@@ -177,17 +222,20 @@ const labels = computed(() =>
           :x="l.x"
           :y="l.y - (l.rows.length - 1) * 6 + ri * 13"
           :text-anchor="l.anchor"
-          :font-size="ri === l.rows.length - 1 ? 10 : 11.5"
-          :fill="!l.practiced ? '#b6c0d0' : ri === 0 && l.rows.length === 3 ? '#8b97ad' : interactive ? '#2f6bff' : '#5a6b8c'"
+          :font-size="ri === l.rows.length - 1 ? 10.5 : 11.5"
+          :font-weight="ri === l.rows.length - 1 ? 650 : 500"
+          :fill="rowFill(l, ri)"
           dominant-baseline="middle"
+          class="lbl-text"
+          :class="{ value: ri === l.rows.length - 1 }"
         >{{ row }}</text>
         <!-- 透明热区：覆盖整个标签块 -->
         <rect
           v-if="interactive"
-          :x="l.anchor === 'start' ? l.x - 6 : l.anchor === 'end' ? l.x - 74 : l.x - 40"
-          :y="l.y - (l.rows.length - 1) * 6 - 8"
-          width="80"
-          :height="l.rows.length * 13 + 8"
+          :x="l.anchor === 'start' ? l.x - 6 : l.anchor === 'end' ? l.x - 80 : l.x - 44"
+          :y="l.y - (l.rows.length - 1) * 6 - 9"
+          width="88"
+          :height="l.rows.length * 13 + 9"
           fill="transparent"
         />
       </g>
@@ -196,7 +244,41 @@ const labels = computed(() =>
 </template>
 
 <style scoped>
-.radar-svg { width: 100%; height: auto; }
-.clickable { cursor: pointer; }
-.clickable:hover text { text-decoration: underline; }
+.radar-wrap {
+  display: flex;
+  justify-content: center;
+}
+
+.radar-svg {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.lbl-text {
+  font-family: inherit;
+  letter-spacing: -0.01em;
+  transition: fill 0.16s var(--ease);
+}
+
+.lbl-text.value {
+  font-variant-numeric: tabular-nums;
+}
+
+.lbl-group.clickable {
+  cursor: pointer;
+}
+
+.lbl-group.clickable:hover .lbl-text {
+  fill: var(--brand);
+}
+
+.lbl-group.clickable:hover .lbl-text.value {
+  text-decoration: underline;
+}
+
+.lbl-group.off .lbl-text {
+  fill: var(--ink-3);
+  opacity: 0.85;
+}
 </style>

@@ -534,7 +534,8 @@ def _add_wrong_book(session: Session, user_id: int, tq: TestQuestion) -> None:
             kb_problem_id=tq.kb_problem_id,
             kp_ids=tq.kp_ids,
             stem=tq.stem,
-            image_path=tq.image_path,
+            # 错题本展示用题干图（已入库、体积小）；无题干图才退回整题图
+            image_path=tq.stem_image_path or tq.image_path,
             answer=tq.answer,
             solution=tq.solution,
             last_wrong_at=utcnow(),

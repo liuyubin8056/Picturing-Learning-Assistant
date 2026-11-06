@@ -1,11 +1,44 @@
 """F 模块：错题本。来源 = 答疑未解决 + 自测错题；支持重做与标记掌握。"""
 
 import json
+from pathlib import Path
 
 from sqlmodel import Session, select
 
-from ..models import Mastery, Question, WrongBook, utcnow
+from ..models import KBProblem, Mastery, Question, WrongBook, utcnow
 from . import profile_service as ps
+
+
+_MEDIA_ROOT = Path(__file__).resolve().parents[2]   # backend/
+
+
+def _exists(rel: str | None) -> bool:
+    return bool(rel) and (_MEDIA_ROOT / rel).exists()
+
+
+def resolve_image(session: Session, w: WrongBook) -> str | None:
+    """图片路径回退链，保证前端不会拿到 404 的地址。
+
+    历史原因：错题表里存过整题图路径（kb_images/problems/*.png），
+    后续整题图迁到 problems/whole/ 且不进仓库 → 老记录全部失效。
+    这里按「原路径 → 题库题干图 → 题库整题图 → 同名整题图」逐级回退，
+    优先落在已入库的题干图上，队友 clone 后也能正常显示。
+    """
+    if _exists(w.image_path):
+        return w.image_path
+
+    if w.kb_problem_id:
+        kb = session.get(KBProblem, w.kb_problem_id)
+        if kb:
+            for cand in (kb.stem_image_path, kb.crop_image_path):
+                if _exists(cand):
+                    return cand
+
+    if w.image_path:
+        cand = f"kb_images/problems/whole/{Path(w.image_path).name}"
+        if _exists(cand):
+            return cand
+    return w.image_path
 
 
 def add_from_question(
@@ -73,7 +106,7 @@ def list_wrong(
                 "question_id": w.question_id,
                 "kb_problem_id": w.kb_problem_id,
                 "stem": w.stem,
-                "image_path": w.image_path,
+                "image_path": resolve_image(session, w),
                 "answer": w.answer,
                 "solution": w.solution,
                 "error_tags": json.loads(w.error_tags or "[]"),

@@ -1,83 +1,149 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { userId, currentUser, clearLogin } from './store/user'
-import { logout as apiLogout } from './api'
+import Icon from './components/Icon.vue'
 
 const route = useRoute()
 const router = useRouter()
 
 const isLogin = computed(() => route.path === '/login')
-const displayName = computed(
-  () => currentUser.value?.nickname || currentUser.value?.email_masked || `用户 ${userId.value}`
-)
-
-// 任一接口返回 401 → 登录态失效，统一回登录页
-window.addEventListener('auth:expired', () => {
-  clearLogin()
-  if (route.path !== '/login') router.replace('/login')
-})
-
-async function doLogout() {
-  try {
-    await apiLogout()
-  } catch {
-    /* 令牌可能已失效，忽略 */
-  }
-  clearLogin()
-  router.replace('/login')
-}
 
 const tabs = [
-  { path: '/camera', ic: '📷', label: '拍照' },
-  { path: '/practice', ic: '✏️', label: '练习' },
-  { path: '/diagnose', ic: '📊', label: '诊断' },
-  { path: '/profile', ic: '👤', label: '我的' },
+  { path: '/camera', icon: 'camera', label: '拍照' },
+  { path: '/practice', icon: 'pencil', label: '练习' },
+  { path: '/diagnose', icon: 'chart', label: '诊断' },
+  { path: '/profile', icon: 'user', label: '我的' },
 ]
 
 const title = computed(() => route.meta.title || '智能拍照学习助手')
+const subtitle = computed(() => route.meta.subtitle || '拍下题目，AI 带你一步步看懂')
+
+// 顶栏显示登录身份；未登录（极少见）退回用户 id
+const displayName = computed(
+  () => currentUser.value?.nickname || currentUser.value?.email_masked || `用户 ${userId.value}`
+)
+const avatarText = computed(() => {
+  const n = (displayName.value || '').trim()
+  if (!n) return '?'
+  const first = n[0]
+  return /[\u4e00-\u9fff]/.test(first) ? first : first.toUpperCase()
+})
+
+// 任一接口返回 401 → 登录态失效，统一回登录页
+function onAuthExpired() {
+  clearLogin()
+  if (route.path !== '/login') router.replace('/login')
+}
+window.addEventListener('auth:expired', onAuthExpired)
+
+const bodyEl = ref(null)
+const scrolled = ref(false)
+function onScroll() {
+  scrolled.value = (bodyEl.value?.scrollTop || 0) > 4
+}
+
 const toast = ref('')
 let toastTimer = null
 
-// 全局轻提示（供子组件通过 provide/inject 或事件使用）
+// 全局轻提示（子组件统一通过 window.__toast?.() 调用）
 window.__toast = (msg, ms = 2200) => {
   toast.value = msg
   clearTimeout(toastTimer)
   toastTimer = setTimeout(() => (toast.value = ''), ms)
 }
+
+watch(
+  () => route.path,
+  () => {
+    document.title = `${title.value} · 智能拍照学习助手`
+    if (bodyEl.value) bodyEl.value.scrollTop = 0
+  },
+  { immediate: true }
+)
+
+onMounted(() => {
+  bodyEl.value?.addEventListener('scroll', onScroll, { passive: true })
+})
+onBeforeUnmount(() => {
+  bodyEl.value?.removeEventListener('scroll', onScroll)
+  window.removeEventListener('auth:expired', onAuthExpired)
+})
 </script>
 
 <template>
   <div class="app-shell">
-    <header class="appbar" v-if="!isLogin">
-      <span class="logo">∑</span>
-      <div class="who">
-        <b>{{ title }}</b>
-        <small>{{ displayName }}<template v-if="currentUser?.is_demo"> · 演示账号</template></small>
-      </div>
-      <span class="spacer"></span>
-      <button class="logout" @click="doLogout">退出</button>
-    </header>
+    <div ref="bodyEl" class="app-body">
+      <header v-if="!isLogin" class="appbar" :class="{ scrolled }">
+        <router-link to="/camera" class="logo" aria-label="回到首页">
+          <Icon name="sparkles" :size="21" :stroke="1.9" />
+        </router-link>
+        <div class="appbar-text">
+          <h1>{{ title }}</h1>
+          <p>
+            <span>智能拍照学习助手</span>
+            <span class="dot"></span>
+            <span>{{ displayName }}<template v-if="currentUser?.is_demo"> · 演示</template></span>
+          </p>
+        </div>
+        <router-link to="/profile" class="avatar" :aria-label="`${displayName} 的档案`">
+          <span>{{ avatarText }}</span>
+        </router-link>
+      </header>
 
-    <!-- keep-alive：切到其它页再回来，拍照/练习的进度不被清空 -->
-    <router-view v-slot="{ Component }">
-      <keep-alive>
-        <component :is="Component" />
-      </keep-alive>
-    </router-view>
+      <p v-if="!isLogin" class="route-sub">{{ subtitle }}</p>
 
-    <nav class="tabbar" v-if="!isLogin">
+      <!-- keep-alive：切到其它页再回来，拍照/练习的进度不被清空（登录页不缓存） -->
+      <router-view v-slot="{ Component }">
+        <transition name="page" mode="out-in">
+          <keep-alive :exclude="['LoginView']">
+            <component :is="Component" :key="route.path" />
+          </keep-alive>
+        </transition>
+      </router-view>
+    </div>
+
+    <nav v-if="!isLogin" class="tabbar">
       <router-link
         v-for="t in tabs"
         :key="t.path"
         :to="t.path"
         :class="{ on: route.path === t.path }"
+        :aria-current="route.path === t.path ? 'page' : undefined"
       >
-        <span class="ic">{{ t.ic }}</span>
-        <span>{{ t.label }}</span>
+        <span class="tab-ic"><Icon :name="t.icon" :size="21" :stroke="1.9" /></span>
+        <span class="tab-label">{{ t.label }}</span>
       </router-link>
     </nav>
 
-    <div v-if="toast" class="toast">{{ toast }}</div>
+    <transition name="toast">
+      <div v-if="toast" class="toast" role="status">
+        <Icon name="check" :size="15" :stroke="2.4" />
+        <span>{{ toast }}</span>
+      </div>
+    </transition>
   </div>
 </template>
+
+<style scoped>
+.route-sub {
+  padding: 0 18px;
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--ink-3);
+  letter-spacing: 0.01em;
+}
+
+/* 中文昵称单字在 38px 圆内偏小，略放大 */
+.appbar .avatar span {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+/* 桌面端卡片内，副标题不贴顶 */
+@media (min-width: 640px) {
+  .route-sub {
+    padding-top: 2px;
+  }
+}
+</style>
