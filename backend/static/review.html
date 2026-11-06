@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>题库人工校对 · 智能拍照学习助手</title>
+<style>
+:root{
+  --bg:#14161a; --panel:#1c1f26; --line:#2c313b; --text:#e6e8ec; --muted:#9aa3b2;
+  --ok:#3fb950; --fix:#e3b341; --pend:#8b949e; --accent:#58a6ff; --danger:#f85149;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+  font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+header{padding:12px 20px;border-bottom:1px solid var(--line);display:flex;gap:16px;
+  align-items:center;flex-wrap:wrap;position:sticky;top:0;background:var(--bg);z-index:10}
+h1{font-size:16px;margin:0;font-weight:500}
+.stat{color:var(--muted);font-size:12px}
+.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+select,input,button{background:#22262e;color:var(--text);border:1px solid var(--line);
+  border-radius:6px;padding:5px 9px;font-size:13px;font-family:inherit}
+button{cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);color:#0d1117;border-color:transparent;font-weight:500}
+button.ok{color:var(--ok)}button.fix{color:var(--fix)}
+main{display:grid;grid-template-columns:minmax(320px,1fr) minmax(360px,1fr);gap:0;height:calc(100vh - 58px)}
+.left{border-right:1px solid var(--line);overflow:auto;padding:14px}
+.right{overflow:auto;padding:18px 22px}
+.card{border:1px solid var(--line);border-radius:10px;margin-bottom:14px;overflow:hidden;background:var(--panel)}
+.card img{width:100%;display:block;background:#fff;cursor:zoom-in}
+.meta{display:flex;gap:8px;align-items:center;padding:7px 10px;font-size:12px;color:var(--muted);
+  border-top:1px solid var(--line);flex-wrap:wrap}
+.tag{padding:1px 7px;border-radius:20px;border:1px solid var(--line);font-size:11px}
+.tag.ok{color:var(--ok);border-color:var(--ok)}
+.tag.fix{color:var(--fix);border-color:var(--fix)}
+.tag.pending{color:var(--pend);border-color:var(--pend)}
+.field{margin-bottom:14px}
+.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+.field .val{background:#11141a;border:1px solid var(--line);border-radius:6px;padding:9px 11px;
+  white-space:pre-wrap;word-break:break-word;font-size:13px}
+.field .val.mono{font-family:ui-monospace,Consolas,monospace;font-size:12px;white-space:pre-wrap}
+.opts{display:flex;flex-direction:column;gap:5px}
+.opt{background:#11141a;border:1px solid var(--line);border-radius:6px;padding:6px 10px;font-size:13px}
+.opt b{color:var(--accent);margin-right:6px}
+.ans{color:var(--ok);font-weight:500}
+.actions{display:flex;gap:8px;padding:12px 0;position:sticky;bottom:0;background:var(--bg);
+  border-top:1px solid var(--line)}
+.pager{display:flex;gap:8px;align-items:center;justify-content:center;padding:12px}
+.empty{color:var(--muted);text-align:center;padding:40px}
+#lb{position:fixed;inset:0;background:rgba(0,0,0,.9);display:none;z-index:99;
+  align-items:center;justify-content:center;flex-direction:column;gap:10px;padding:16px}
+#lb img{max-width:96%;max-height:88%;background:#fff}
+kbd{background:#22262e;border:1px solid var(--line);border-radius:4px;padding:1px 5px;font-size:11px}
+</style>
+</head>
+<body>
+<header>
+  <h1>题库人工校对</h1>
+  <div class="bar">
+    <select id="fChapter"><option value="">全部章节</option></select>
+    <select id="fType">
+      <option value="">全部题型</option>
+      <option value="choice">单选</option><option value="multiple">多选</option>
+      <option value="judge">判断</option><option value="fill">填空</option>
+      <option value="solve">解答</option>
+    </select>
+    <select id="fReview">
+      <option value="">全部状态</option>
+      <option value="pending">待校对</option>
+      <option value="ok">准确</option>
+      <option value="fix">需修正</option>
+    </select>
+    <input id="fKeyword" placeholder="题干关键词…" style="width:150px">
+    <button class="primary" onclick="load()">查询</button>
+  </div>
+  <div class="stat" id="stat"></div>
+</header>
+
+<main>
+  <div class="left" id="list"></div>
+  <div class="right" id="detail"><div class="empty">← 左侧选择题目查看详情</div></div>
+</main>
+
+<div id="lb" onclick="this.style.display='none'">
+  <img id="lbImg" alt="">
+  <div class="stat">点击任意处关闭（Esc）</div>
+</div>
+
+<script>
+const API = '';
+let state = {page:1, pageSize:20, cur:null};
+
+async function api(path, opts){
+  const r = await fetch(API + path, opts);
+  if(!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+async function boot(){
+  const s = await api('/api/v1/kb/stats');
+  const ch = s.by_chapter || {};
+  document.getElementById('stat').textContent =
+    `题目 ${s.problems} 道（客观 ${s.objective} / 主观 ${s.subjective}）· ` +
+    `有答案 ${s.with_answer} · 有详解 ${s.with_solution} · 知识点 ${s.knowledge_points.points} 个 · ` +
+    `校对：准确 ${(s.by_review_status||{}).ok||0} / 需修正 ${(s.by_review_status||{}).fix||0} / 待校对 ${(s.by_review_status||{}).pending||0}`;
+  const sel = document.getElementById('fChapter');
+  Object.keys(ch).sort().forEach(k=>{
+    const o = document.createElement('option');
+    o.value = k; o.textContent = `${k}（${ch[k]}）`;
+    sel.appendChild(o);
+  });
+}
+
+async function load(){
+  const q = new URLSearchParams({page: state.page, page_size: state.pageSize});
+  const c = document.getElementById('fChapter').value;
+  const t = document.getElementById('fType').value;
+  const rv = document.getElementById('fReview').value;
+  const k = document.getElementById('fKeyword').value.trim();
+  if(c) q.set('chapter', c);
+  if(t) q.set('question_type', t);
+  if(rv) q.set('review_status', rv);
+  if(k) q.set('keyword', k);
+  const d = await api('/api/v1/kb/problems?' + q);
+  const list = document.getElementById('list');
+  if(!d.items.length){ list.innerHTML = '<div class="empty">没有符合条件的题目</div>'; return; }
+  list.innerHTML = d.items.map(p=>{
+    const img = p.crop_image_path ? '/'+p.crop_image_path : '';
+    return `<div class="card" id="c${p.id}" onclick="show(${p.id})" style="cursor:pointer">
+      ${img ? `<img src="${img}" loading="lazy" alt="">` : '<div class="empty">无裁剪图</div>'}
+      <div class="meta">
+        <b>【${p.problem_no ?? '?'}】</b>
+        <span>p${p.source_page ?? '-'}</span>
+        <span>${p.question_type ?? '-'}</span>
+        <span>难度${p.difficulty ?? '-'}</span>
+        <span class="tag ${p.review_status}">${p.review_status}</span>
+      </div></div>`;
+  }).join('');
+  document.getElementById('list').insertAdjacentHTML('beforeend',
+    `<div class="pager"><button onclick="state.page--;load()">上一页</button>
+     <span class="stat">第 ${d.page} 页 / 共 ${Math.ceil(d.total/d.page_size)} 页（${d.total} 道）</span>
+     <button onclick="state.page++;load()">下一页</button></div>`);
+  show(d.items[0].id);
+}
+
+async function show(id){
+  const p = await api('/api/v1/kb/problems/' + id);
+  state.cur = p;
+  const opts = (p.options||[]).map(o=>`<div class="opt"><b>${o.key}</b>${esc(o.text)}</div>`).join('');
+  const kps = (p.kp_names||[]).map(n=>`<span class="tag">${esc(n)}</span>`).join(' ');
+  const errs = (p.error_tags||[]).map(n=>`<span class="tag fix">${esc(n)}</span>`).join(' ');
+  document.getElementById('detail').innerHTML = `
+    <div class="field"><label>题号 / 来源 / 题型 / 难度</label>
+      <div class="val">【${p.problem_no ?? '-'}】 · PDF p${p.source_page ?? '-'}（书 p${p.book_page ?? '-'}）
+        · ${p.question_type ?? '-'} · 难度 ${p.difficulty ?? '-'} · ${p.is_objective ? '可自动判分' : '主观题'}</div></div>
+    <div class="field"><label>题干</label><div class="val">${esc(p.stem||'')}</div></div>
+    ${opts?`<div class="field"><label>选项</label><div class="opts">${opts}</div></div>`:''}
+    <div class="field"><label>答案</label><div class="val ans">${esc(p.answer||'（缺失）')}</div></div>
+    <div class="field"><label>详解</label><div class="val mono">${esc(p.solution||'（缺失）')}</div></div>
+    <div class="field"><label>知识点</label><div class="val">${kps||'（未映射）'}</div></div>
+    <div class="field"><label>错因标签</label><div class="val">${errs||'（无）'}</div></div>
+    ${p.ocr_text?`<div class="field"><label>OCR 辅助文本（仅参考，公式可能失真）</label>
+      <div class="val mono">${esc(p.ocr_text.slice(0,600))}</div></div>`:''}
+    ${p.page_image_path?`<div class="field"><label>整页图</label>
+      <div><a href="/_kb_out/pages/${p.page_image_path.split('/').pop()}" target="_blank" style="color:var(--accent)">查看原页 ↗</a></div></div>`:''}
+    <div class="actions">
+      <button class="ok" onclick="mark('ok')">✓ 准确 <kbd>O</kbd></button>
+      <button class="fix" onclick="mark('fix')">✗ 需修正 <kbd>F</kbd></button>
+      <input id="note" placeholder="备注（可选）" style="flex:1">
+      <button onclick="mark('pending')">重置 <kbd>R</kbd></button>
+    </div>`;
+  document.querySelectorAll('.card').forEach(e=>e.style.outline='');
+  const c = document.getElementById('c'+id); if(c) c.style.outline='2px solid var(--accent)';
+}
+
+function esc(s){
+  return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function mark(status){
+  if(!state.cur) return;
+  const note = document.getElementById('note')?.value || null;
+  await api(`/api/v1/kb/problems/${state.cur.id}/review`, {
+    method:'PUT', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({review_status: status, review_note: note})
+  });
+  const id = state.cur.id;
+  const card = document.getElementById('c'+id);
+  if(card){
+    const tag = card.querySelector('.tag');
+    tag.className = 'tag ' + status; tag.textContent = status;
+  }
+  state.cur.review_status = status;
+  boot();
+}
+
+document.addEventListener('keydown', e=>{
+  if(e.key==='Escape') document.getElementById('lb').style.display='none';
+  if(document.activeElement.tagName==='INPUT') return;
+  const k = e.key.toLowerCase();
+  if(k==='o') mark('ok'); else if(k==='f') mark('fix'); else if(k==='r') mark('pending');
+});
+document.addEventListener('click', e=>{
+  if(e.target.tagName==='IMG' && e.target.closest('.card')){
+    document.getElementById('lbImg').src = e.target.src;
+    document.getElementById('lb').style.display='flex';
+  }
+});
+
+boot().then(load);
+</script>
+</body>
+</html>
