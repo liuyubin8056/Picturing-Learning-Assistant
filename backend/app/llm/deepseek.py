@@ -267,6 +267,24 @@ def extract_usage(data: dict) -> dict:
     }
 
 
+def explain_http_error(status: int, body: str, model: str) -> str:
+    """把网关的 HTTP 错误翻成能直接指导排查的话。"""
+    msg = f"大模型返回 {status}：{body[:300]}"
+    low = body.lower()
+    if status == 401 and "key_model_access_denied" in low:
+        msg += (
+            f"\n提示：当前 API Key 无权访问模型「{model}」。"
+            "请把 backend/.env 的 DEEPSEEK_MODEL 改成该 Key 允许的模型名"
+            "（网关一般要求带厂商前缀，如 ByteDance-volcengine/DeepSeek-V4.1-Flash），"
+            "改完必须重启后端才生效。"
+        )
+    elif status == 401:
+        msg += "\n提示：API Key 无效或已过期，请检查 backend/.env 的 DEEPSEEK_API_KEY。"
+    elif status == 404 and "model" in low:
+        msg += f"\n提示：模型「{model}」在网关不存在，请核对 DEEPSEEK_MODEL。"
+    return msg
+
+
 class DeepSeekClient:
     def __init__(self, settings: Settings):
         self._s = settings
@@ -305,7 +323,7 @@ class DeepSeekClient:
             raise LLMCallError(f"调用大模型失败：{e}") from e
 
         if resp.status_code != 200:
-            raise LLMCallError(f"大模型返回 {resp.status_code}：{resp.text[:300]}")
+            raise LLMCallError(explain_http_error(resp.status_code, resp.text, self.model))
         try:
             data = resp.json()
         except ValueError as e:

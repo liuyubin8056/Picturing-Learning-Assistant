@@ -91,6 +91,16 @@ desktop.ini
 # 队友前端演示 demo（独立目录，不入库）
 高数拍搜/
 
+# 队友交付包（含嵌套 .git 与整份题库图片，体积上百 MB，不入库）
+# 顶层 /* 本已覆盖，这里显式列出：一是不依赖兜底规则，
+# 二是避免以后调整白名单时被 ! 放行误入。
+/Picturing-Learning-Assistant-main/
+/Picturing-Learning-Assistant-界面美化版/
+/Picturing-Learning-Assistant-*.rar
+/*.rar
+/*.zip
+/*.7z
+
 # ---------- ⑧ 前端（frontend/）----------
 # 依赖包目录（体积大，npm install 可重建）
 frontend/node_modules/
