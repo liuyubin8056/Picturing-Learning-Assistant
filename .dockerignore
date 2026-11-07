@@ -1,0 +1,38 @@
+# Docker 构建上下文排除项
+# 只把「跑服务需要的代码」送进构建上下文，其余靠 volume 挂载。
+
+.git
+.gitignore
+.github
+
+# 依赖与缓存
+**/node_modules
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+frontend/.vite
+
+# 前端源码：dist 是挂载进去的，不需要打进镜像
+frontend
+
+# 数据目录：全部走 volume，避免镜像臃肿
+backend/kb_images
+backend/uploads
+backend/_kb_out
+backend/profiles
+backend/dev.db
+
+# 建库脚本与产物（离线用）
+backend/scripts/kb
+backend/_pdf_probe
+
+# 队友交付包、压缩包、教材 PDF
+Picturing-Learning-Assistant-*
+*.rar
+*.zip
+*.7z
+*.pdf
+
+# 文档
+docs
