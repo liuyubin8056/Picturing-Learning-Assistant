@@ -7,7 +7,8 @@ import Icon from './components/Icon.vue'
 const route = useRoute()
 const router = useRouter()
 
-const isLogin = computed(() => route.path === '/login')
+// 登录页与隐私政策页都是「无壳」页面：不显示顶栏/副标题/底栏
+const isBare = computed(() => !!route.meta.public)
 
 const tabs = [
   { path: '/camera', icon: 'camera', label: '拍照' },
@@ -74,7 +75,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="app-shell">
     <div ref="bodyEl" class="app-body">
-      <header v-if="!isLogin" class="appbar" :class="{ scrolled }">
+      <header v-if="!isBare" class="appbar" :class="{ scrolled }">
         <router-link to="/camera" class="logo" aria-label="回到首页">
           <Icon name="sparkles" :size="21" :stroke="1.9" />
         </router-link>
@@ -91,7 +92,7 @@ onBeforeUnmount(() => {
         </router-link>
       </header>
 
-      <p v-if="!isLogin" class="route-sub">{{ subtitle }}</p>
+      <p v-if="!isBare" class="route-sub">{{ subtitle }}</p>
 
       <!-- keep-alive：切到其它页再回来，拍照/练习的进度不被清空（登录页不缓存） -->
       <router-view v-slot="{ Component }">
@@ -103,7 +104,7 @@ onBeforeUnmount(() => {
       </router-view>
     </div>
 
-    <nav v-if="!isLogin" class="tabbar">
+    <nav v-if="!isBare" class="tabbar">
       <router-link
         v-for="t in tabs"
         :key="t.path"

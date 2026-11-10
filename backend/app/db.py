@@ -30,6 +30,8 @@ _LIGHT_MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("status", "TEXT DEFAULT 'active'"),
         ("is_demo", "INTEGER DEFAULT 0"),
         ("last_login_at", "DATETIME"),
+        ("consent_at", "DATETIME"),
+        ("consent_version", "TEXT"),
     ],
     "kb_problems": [
         ("ocr_text", "TEXT"),

@@ -29,6 +29,10 @@ class User(SQLModel, table=True):
     status: str = Field(default="active")  # active / locked / deleted
     is_demo: bool = Field(default=False)   # 演示账号（1001），免登录进入
     last_login_at: datetime | None = None
+    # 隐私政策同意：合规要求「收集前告知并取得同意」。
+    # 已有历史账号为空，下次登录时补记。
+    consent_at: datetime | None = None
+    consent_version: str | None = None
 
 
 class VerificationCode(SQLModel, table=True):

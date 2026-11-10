@@ -43,10 +43,17 @@ class Settings(BaseSettings):
 
     # ---- 认证 ----
     auth_cookie_name: str = "spl_token"
-    auth_token_days: int = 30            # 令牌有效期
+    auth_token_days: int = 30
+    log_level: str = "INFO"
+    # 烧钱接口限流（每分钟 6 次等）。测试环境关掉，避免用例之间互相挤额度。
+    rate_limit_enabled: bool = True            # 令牌有效期
     auth_code_ttl_seconds: int = 300     # 验证码 5 分钟
     auth_code_cooldown: int = 60         # 同邮箱重发冷却
     allow_demo_login: bool = True        # 演示账号免登录入口（生产请关）
+    # 演示账号是否可以查看"任意用户"的数据。默认关：
+    # 关了之后演示账号只能看自己（1001），汇报时切换账号才临时打开。
+    # 为什么两个开关：ALLOW_DEMO_LOGIN 是"能不能进"，这个是"进去能看多少"。
+    allow_demo_cross_access: bool = False
 
     @property
     def mail_configured(self) -> bool:

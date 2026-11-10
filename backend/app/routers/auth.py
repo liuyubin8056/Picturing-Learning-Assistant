@@ -5,12 +5,15 @@
 - X-Client: app        → 返回 token 由客户端存入 Keychain / Keystore，不设 Cookie。
 """
 
+import json
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from sqlmodel import Session, select
 
 from ..config import get_settings
 from ..db import get_session
 from ..deps import COOKIE_NAME, current_user
+from ..services import export_service
 from ..models import (
     AuthToken,
     DiagnosisReport,
@@ -37,6 +40,9 @@ from ..schemas import (
 from ..services import auth_service as auth
 from ..services import mailer
 
+# 隐私政策版本：政策内容有实质变化时改这里，用户下次登录会补记新版本
+CONSENT_VERSION = "2026-11"
+
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
@@ -47,6 +53,7 @@ def _user_out(u: User) -> UserOut:
         email_masked=auth.mask_email(u.email) if u.email else None,
         nickname=u.nickname,
         is_demo=bool(u.is_demo),
+        consent_at=u.consent_at,
         created_at=u.created_at,
     )
 
@@ -130,9 +137,22 @@ def login_by_code(
     except ValueError as exc:
         raise HTTPException(401, str(exc)) from exc
 
+    # 合规：新建账号必须先同意隐私政策；老账号不阻塞，下次登录时补记
+    existing = auth.get_user_by_email(session, email)
+    if existing is None and not payload.consent:
+        raise HTTPException(400, "首次登录需要先阅读并同意《隐私政策与用户协议》")
+
     user, is_new = auth.get_or_create_user(session, email)
     if user.status != "active":
         raise HTTPException(403, "账号已被停用")
+
+    if payload.consent and not user.consent_at:
+        user.consent_at = utcnow()
+        user.consent_version = CONSENT_VERSION
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+
     return _login_response(
         session, user, is_new, response,
         _client_kind(x_client), request.headers.get("user-agent"),
@@ -322,3 +342,28 @@ def delete_account(
     session.add(me)
     session.commit()
     return {"ok": True}
+
+
+# ---------------- 数据导出 ----------------
+
+@router.get("/export", summary="导出我的全部学习数据（JSON 下载）")
+def export_my_data(
+    me: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """合规用：用户随时可以把自己的数据带走。
+
+    只含本人数据，不含题库；不含密码哈希、登录令牌、验证码。
+    与 DELETE /account 构成「可导出 + 可注销」的闭环。
+    """
+    data = export_service.export_user_data(session, me)
+    body = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+    filename = f"learnmate-{me.id}-{utcnow().strftime('%Y%m%d')}.json"
+    return Response(
+        content=body,
+        media_type="application/json; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )

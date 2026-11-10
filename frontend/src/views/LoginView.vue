@@ -19,9 +19,13 @@ const busy = ref(false)
 const error = ref('')
 const hint = ref('')
 const cooldown = ref(0)
+// 隐私政策同意：不勾选不允许发送验证码
+const agreed = ref(false)
 let timer = null
 
-const canSend = computed(() => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.value.trim()) && cooldown.value === 0)
+const canSend = computed(
+  () => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.value.trim()) && cooldown.value === 0 && agreed.value
+)
 const canLogin = computed(() => /^\d{6}$/.test(code.value.trim()))
 
 const STEPS = [
@@ -69,7 +73,7 @@ async function doLogin() {
   busy.value = true
   error.value = ''
   try {
-    const r = await loginByCode(email.value.trim(), code.value.trim())
+    const r = await loginByCode(email.value.trim(), code.value.trim(), agreed.value)
     applyLogin(r)
     if (r.is_new || !r.user?.nickname) {
       step.value = 'nickname'
@@ -237,6 +241,14 @@ async function enterDemo() {
         </div>
       </template>
 
+      <label class="consent-row">
+        <input v-model="agreed" type="checkbox" />
+        <span>
+          我已阅读并同意
+          <a href="#/privacy" target="_blank" rel="noopener">《隐私政策与用户协议》</a>
+        </span>
+      </label>
+
       <div v-if="error" class="banner err" style="margin-top: 12px">
         <Icon name="alert" :size="15" :stroke="2" />
         <span>{{ error }}</span>
@@ -400,6 +412,29 @@ async function enterDemo() {
 .demo-card {
   margin-top: 12px;
 }
+
+.consent-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 14px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.consent-row input {
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
+  flex: 0 0 auto;
+  accent-color: var(--brand);
+}
+.consent-row a {
+  color: var(--brand);
+  text-decoration: none;
+}
+.consent-row a:hover { text-decoration: underline; }
 
 .foot {
   display: flex;

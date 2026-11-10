@@ -8,6 +8,7 @@
 from fastapi import Cookie, Depends, Header, HTTPException
 from sqlmodel import Session
 
+from .config import get_settings
 from .db import get_session
 from .models import User
 from .services import auth_service as auth
@@ -71,19 +72,20 @@ def ensure_self(user_id: int, me: User = Depends(current_user)) -> int:
     用法：把接口签名里的 `user_id: int` 换成 `uid: int = Depends(ensure_self)`，
     函数体用 uid。路径不变，前端无需改动。
 
-    例外：演示账号（is_demo）允许查看任意账号，方便汇报时切着演示。
+    演示账号只有开了 ALLOW_DEMO_CROSS_ACCESS 才能看别人的数据（汇报切换用），
+    否则和普通账号一样只能看自己 —— 避免"有个 demo 账号就等于全站可读"。
     """
-    if me.is_demo:
+    if user_id == me.id:
         return user_id
-    if user_id != me.id:
-        raise HTTPException(status_code=403, detail="无权访问他人数据")
-    return user_id
+    if me.is_demo and get_settings().allow_demo_cross_access:
+        return user_id
+    raise HTTPException(status_code=403, detail="无权访问他人数据")
 
 
 def ensure_owner(user_id: int | None, me: User) -> int:
     """用于 Form / 请求体里自报 user_id 的接口：缺省取自己，给了就必须是自己。"""
-    if me.is_demo:
-        return user_id or me.id
-    if user_id is not None and user_id != me.id:
-        raise HTTPException(status_code=403, detail="无权操作他人数据")
-    return me.id
+    if user_id is None or user_id == me.id:
+        return me.id
+    if me.is_demo and get_settings().allow_demo_cross_access:
+        return user_id
+    raise HTTPException(status_code=403, detail="无权操作他人数据")

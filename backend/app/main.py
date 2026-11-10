@@ -1,19 +1,43 @@
 """FastAPI 入口。"""
 
+import logging
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from .config import get_settings
 from .db import init_db
+from .middleware import RateLimitMiddleware, RequestContextMiddleware
 from .routers import diagnose, health, kb, profile, questions, tests, tokens
 from .routers import auth as auth_router
 from .storage import get_storage
 
 BASE_DIR = Path(__file__).resolve().parents[1]
+
+
+def _setup_logging() -> None:
+    """让 learnmate.* 的日志进到 uvicorn 的 stdout（生产由 journald / docker 收）。
+
+    uvicorn 自己会配 root handler，所以只在没有 handler 时才 basicConfig，
+    避免把 uvicorn 的访问日志格式覆盖掉。
+    """
+    level = getattr(logging, get_settings().log_level.upper(), logging.INFO)
+    root = logging.getLogger()
+    if not root.handlers:
+        logging.basicConfig(
+            level=level,
+            format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
+            datefmt="%H:%M:%S",
+        )
+    logging.getLogger("learnmate").setLevel(level)
+
+
+_setup_logging()
 
 
 @asynccontextmanager
@@ -28,6 +52,32 @@ app = FastAPI(
     description="拍照 → 多模态大模型识图答疑（一期）+ 知识库查询与人工校对",
     lifespan=lifespan,
 )
+
+# 中间件：add_middleware 后加的先执行 → 请求上下文包在限流外层，
+# 这样限流返回的 429 也会带 X-Request-ID，日志能对上。
+app.add_middleware(RateLimitMiddleware, enabled=True)
+app.add_middleware(RequestContextMiddleware)
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error(request: Request, exc: RequestValidationError):
+    """把 FastAPI 默认的 [{loc:[...],msg:...}] 压成一句人话。
+
+    默认格式前端只能 JSON.stringify 出来给用户看，太糟。
+    """
+    errors = exc.errors()
+    first = errors[0] if errors else {}
+    loc = ".".join(
+        str(x) for x in first.get("loc", []) if x not in ("body", "query", "path")
+    )
+    msg = first.get("msg", "参数不合法")
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": f"{loc}: {msg}" if loc else msg,
+            "request_id": getattr(request.state, "request_id", ""),
+        },
+    )
 
 app.include_router(health.router)
 app.include_router(questions.router)

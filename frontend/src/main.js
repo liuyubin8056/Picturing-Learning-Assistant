@@ -9,6 +9,7 @@ import PracticeView from './views/PracticeView.vue'
 import DiagnoseView from './views/DiagnoseView.vue'
 import ProfileView from './views/ProfileView.vue'
 import LoginView from './views/LoginView.vue'
+import PrivacyView from './views/PrivacyView.vue'
 import { authReady, bootstrapAuth, currentUser } from './store/user'
 
 const router = createRouter({
@@ -19,6 +20,11 @@ const router = createRouter({
       path: '/login',
       component: LoginView,
       meta: { title: '登录', subtitle: '用邮箱验证码进入你的学习档案', public: true },
+    },
+    {
+      path: '/privacy',
+      component: PrivacyView,
+      meta: { title: '隐私政策', public: true },
     },
     {
       path: '/camera',

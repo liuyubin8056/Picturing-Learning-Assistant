@@ -97,3 +97,33 @@ def test_create_question_rejects_other_user(client, monkeypatch):
         files=files,
     )
     assert r.status_code == 403
+
+def test_demo_blocked_when_cross_access_disabled(client):
+    """收窄后的默认行为：演示账号也只能看自己。
+
+    这是把"有个 demo 账号 = 全站可读"堵掉的关键用例。
+    """
+    from app.config import get_settings
+
+    settings = get_settings()
+    prev = settings.allow_demo_cross_access
+    settings.allow_demo_cross_access = False
+    try:
+        # 访问他人 → 403
+        assert client.get("/api/v1/profile/users/7").status_code == 403
+        # 访问自己（demo 覆盖里 id=1）→ 200
+        assert client.get("/api/v1/profile/users/1").status_code == 200
+    finally:
+        settings.allow_demo_cross_access = prev
+
+
+def test_demo_cross_access_can_be_reenabled(client):
+    """汇报场景：显式打开后仍可切账号，不影响演示。"""
+    from app.config import get_settings
+
+    settings = get_settings()
+    settings.allow_demo_cross_access = True
+    try:
+        assert client.get("/api/v1/profile/users/7").status_code == 200
+    finally:
+        settings.allow_demo_cross_access = False

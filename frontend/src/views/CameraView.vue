@@ -9,6 +9,20 @@ const fileInput = ref(null)
 const preview = ref('') // 本地预览 URL
 const pickedFile = ref(null)
 const busy = ref(false)
+// 已等待秒数：让用户能区分"模型在思考"和"页面卡死了"
+const waited = ref(0)
+let waitTimer = null
+
+function startWaiting() {
+  waited.value = 0
+  clearInterval(waitTimer)
+  waitTimer = setInterval(() => (waited.value += 1), 1000)
+}
+
+function stopWaiting() {
+  clearInterval(waitTimer)
+  waitTimer = null
+}
 const result = ref(null) // 答疑结果（QuestionOut）
 const error = ref('')
 
@@ -61,6 +75,7 @@ async function doAsk() {
   if (!pickedFile.value) return
   busy.value = true
   error.value = ''
+  startWaiting()
   try {
     const clientId = 'web-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
     result.value = await askQuestion(pickedFile.value, userId.value, clientId)
@@ -70,6 +85,7 @@ async function doAsk() {
   } catch (e) {
     error.value = e.message || '请求失败'
   } finally {
+    stopWaiting()
     busy.value = false
   }
 }
@@ -192,7 +208,10 @@ async function doFeedback(solved = false) {
         <span class="card-ico"><Icon name="scan" :size="20" /></span>
         <div class="card-head-text">
           <div class="card-title">正在读懂这道题</div>
-          <div class="card-sub">推理型模型通常需要 1~3 分钟，可以稍等一会儿</div>
+          <div class="card-sub">
+            已等待 {{ waited }} 秒 ·
+            {{ waited >= 90 ? '模型仍在推理，网络慢时会久一些' : '推理型模型通常需要 1~3 分钟' }}
+          </div>
         </div>
       </div>
       <ul class="steps">

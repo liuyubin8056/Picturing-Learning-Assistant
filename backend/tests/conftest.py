@@ -72,14 +72,28 @@ def auto_login():
 
     账户体系上线后，业务接口都依赖 current_user。原有 33 个用例直接传
     user_id（1/7/11/98/99 等），若逐个改成带 token 调用，改动面大且易错。
-    这里统一覆盖成 is_demo=True：ensure_self 会放行任意 user_id，
-    因此老用例语义不变。权限本身（401/403）由 test_auth_guard.py 单独覆盖。
+    这里统一覆盖成 is_demo=True 并显式打开 allow_demo_cross_access：
+    老用例会访问 1/7/11/98/99 等多个 user_id，语义保持不变。
+    注意 cross_access 默认是 False（生产默认收窄），
+    权限本身（401/403）由 test_auth_guard.py 单独覆盖。
     """
+    from app.config import get_settings
     from app.deps import current_user
     from app.models import User
+
+    settings = get_settings()
+    prev_cross = settings.allow_demo_cross_access
+    settings.allow_demo_cross_access = True
+    # 用例之间不抢限流额度（有的用例连续多次调 /questions）
+    prev_rl = settings.rate_limit_enabled
+    settings.rate_limit_enabled = False
 
     app.dependency_overrides[current_user] = lambda: User(
         id=1, email="test@example.com", nickname="测试", is_demo=True
     )
-    yield
-    app.dependency_overrides.clear()
+    try:
+        yield
+    finally:
+        app.dependency_overrides.clear()
+        settings.allow_demo_cross_access = prev_cross
+        settings.rate_limit_enabled = prev_rl

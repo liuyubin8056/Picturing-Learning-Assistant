@@ -2,7 +2,7 @@
 import { computed, ref, onMounted } from 'vue'
 import {
   getWrongbook, markMastered, getProfile, listQuestions, listTests,
-  setNickname, logout as apiLogout,
+  setNickname, logout as apiLogout, exportMyData,
 } from '../api'
 import { userId, setUserId, currentUser, clearLogin } from '../store/user'
 import { useRouter } from 'vue-router'
@@ -102,6 +102,15 @@ async function saveName() {
   }
 }
 
+async function doExport() {
+  try {
+    await exportMyData()
+    window.__toast?.('数据已开始下载')
+  } catch (e) {
+    window.__toast?.(e.message || '导出失败')
+  }
+}
+
 async function doLogout() {
   try {
     await apiLogout()
@@ -168,6 +177,7 @@ function emptyText() {
         >
           演示数据 · {{ DEMO_USER }}
         </button>
+        <button class="chip" @click="doExport">导出数据</button>
         <button class="chip danger" @click="doLogout">退出登录</button>
       </div>
       <p class="hint user-hint">

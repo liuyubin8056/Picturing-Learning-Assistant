@@ -34,6 +34,7 @@ class UserOut(BaseModel):
     email_masked: str | None = None
     nickname: str | None = None
     is_demo: bool = False
+    consent_at: datetime | None = None
     created_at: datetime
 
 
@@ -53,6 +54,8 @@ class SendCodeOut(BaseModel):
 class CodeLoginIn(BaseModel):
     email: str
     code: str
+    # 首次注册必须勾选同意隐私政策；老账号可不传
+    consent: bool = False
 
 
 class PasswordLoginIn(BaseModel):
