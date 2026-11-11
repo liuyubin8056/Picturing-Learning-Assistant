@@ -78,10 +78,18 @@ ok ".env 权限已收紧为 600（仅 $APP_USER 可读）"
 # ---------------- 5. 目录权限 ----------------
 say "修正目录权限"
 mkdir -p "$BACKEND/uploads"
-chown -R "$APP_USER:$APP_USER" "$BACKEND/uploads" "$BACKEND/dev.db" 2>/dev/null || true
+# SQLite 写入时要在数据库**同目录**创建 journal 文件。
+# 只给 dev.db 授权是不够的：目录若不属于服务用户，第一次写就会报
+# "attempt to write a readonly database"。（实测踩过）
+# 用「属组 + 775」：项目所有者仍能改代码，服务用户能写数据。
+chown "$APP_USER:$APP_USER" "$BACKEND/dev.db" 2>/dev/null || true
+chgrp "$APP_USER" "$BACKEND" 2>/dev/null || true
+chmod 775 "$BACKEND" 2>/dev/null || true
+chown -R "$APP_USER:$APP_USER" "$BACKEND/uploads" 2>/dev/null || true
+[ -d "$BACKEND/profiles" ] && chown -R "$APP_USER:$APP_USER" "$BACKEND/profiles" 2>/dev/null || true
 # 题库图片只读即可
 chmod -R a+rX "$BACKEND/kb_images" 2>/dev/null || true
-ok "uploads 可写、kb_images 只读"
+ok "dev.db 可写（含同目录 journal）、uploads/profiles 可写、kb_images 只读"
 
 # ---------------- 6. systemd ----------------
 say "安装 systemd 服务"

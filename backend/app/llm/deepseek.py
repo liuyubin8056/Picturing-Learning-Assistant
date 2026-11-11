@@ -267,6 +267,31 @@ def extract_usage(data: dict) -> dict:
     }
 
 
+def explain_connect_error(e: Exception) -> str:
+    """把网络层异常翻译成能指导排查的话。
+
+    httpx 的超时类异常 str() 往往是空字符串，直接 f"{e}" 会得到
+    "调用大模型失败：" 这种没有信息量的提示，用户没法判断是网络、网关还是配置。
+    """
+    if isinstance(e, httpx.ConnectTimeout):
+        return (
+            "连接大模型网关超时（10 秒）。请确认 DEEPSEEK_BASE_URL 从本机可访问——"
+            "校内网关通常只对校园网开放，部署在公网服务器上会连不上。"
+        )
+    if isinstance(e, httpx.ConnectError):
+        return (
+            "无法连接大模型网关。请检查 DEEPSEEK_BASE_URL 与网络连通性"
+            "（校内网关需要校园网环境）。"
+        )
+    if isinstance(e, httpx.ReadTimeout):
+        return (
+            "大模型响应超时。模型可能仍在推理，可稍后重试；"
+            "频繁超时请调大 DEEPSEEK_TIMEOUT。"
+        )
+    detail = str(e).strip()
+    return f"调用大模型失败（{type(e).__name__}）" + (f"：{detail}" if detail else "")
+
+
 def explain_http_error(status: int, body: str, model: str) -> str:
     """把网关的 HTTP 错误翻成能直接指导排查的话。"""
     msg = f"大模型返回 {status}：{body[:300]}"
@@ -317,10 +342,13 @@ class DeepSeekClient:
         headers = {"Authorization": f"Bearer {self._s.deepseek_api_key}"}
         url = f"{self._s.deepseek_base_url.rstrip('/')}/chat/completions"
         try:
-            async with httpx.AsyncClient(timeout=self._s.deepseek_timeout) as client:
+            # 连接阶段单独限时：网关不可达时不该让用户干等整个推理超时（实测 120s）。
+            # 读取阶段仍用配置值（推理型模型本身就要 30~90s）。
+            _timeout = httpx.Timeout(self._s.deepseek_timeout, connect=10.0)
+            async with httpx.AsyncClient(timeout=_timeout) as client:
                 resp = await client.post(url, json=payload, headers=headers)
         except httpx.HTTPError as e:
-            raise LLMCallError(f"调用大模型失败：{e}") from e
+            raise LLMCallError(explain_connect_error(e)) from e
 
         if resp.status_code != 200:
             raise LLMCallError(explain_http_error(resp.status_code, resp.text, self.model))
