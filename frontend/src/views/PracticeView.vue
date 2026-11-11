@@ -59,15 +59,25 @@ function toggleTutor(qid) {
 const judgeBusy = ref({})       // { qid: true }
 const judgeRes = ref({})        // { qid: {correct, reason, student_answer, confidence} }
 
-// 题干展示方式：默认原题图，可切文字版（{ [qid]: 'image' | 'text' }）
-const stemView = ref({})
+// 题干展示：默认文字版（排版统一、手机上无需横向拖动），需要核对原题时再展开原图
+const stemImageOpen = ref({})   // { [qid]: true } 表示该题已展开原题图
 
 function hasStemImage(q) {
   return !!(q.stem_image_path || q.image_path)
 }
 
-function setStemView(qid, v) {
-  stemView.value = { ...stemView.value, [qid]: v }
+function isStemImageOpen(q) {
+  return !!stemImageOpen.value[q.id]
+}
+
+function toggleStemImage(qid) {
+  stemImageOpen.value = { ...stemImageOpen.value, [qid]: !stemImageOpen.value[qid] }
+}
+
+// 原题图放大：题干切图多为 684px 宽的窄条，缩到手机宽度后字偏小，点一下看大图
+const zoomSrc = ref('')
+function openZoom(q) {
+  zoomSrc.value = '/' + (q.stem_image_path || q.image_path)
 }
 
 function pickJudgeFile(q) {
@@ -443,15 +453,17 @@ const judgeOf = (qid) => (judgeResult.value?.detail || []).find((d) => d.questio
           <span v-if="isAnswered(q)" class="tag ok"><Icon name="check" :size="11" :stroke="2.6" />已作答</span>
         </div>
 
-        <!-- 题干区：图片与文字二选一，避免同一题出现两份内容不一致的题目 -->
-        <div v-if="hasStemImage(q)" class="seg mini stem-switch">
-          <button :class="{ on: stemView[q.id] !== 'text' }" @click="setStemView(q.id, 'image')">原题图</button>
-          <button :class="{ on: stemView[q.id] === 'text' }" @click="setStemView(q.id, 'text')">文字版</button>
+        <!-- 题干区：默认文字版；原题图按需展开，避免同一题出现两份内容 -->
+        <div class="stem-box"><MarkdownView :text="q.stem" /></div>
+        <div v-if="hasStemImage(q)" class="stem-img-bar">
+          <button type="button" class="stem-img-btn" :class="{ on: isStemImageOpen(q) }" @click="toggleStemImage(q.id)">
+            <Icon :name="isStemImageOpen(q) ? 'x' : 'image'" :size="14" :stroke="2" />
+            {{ isStemImageOpen(q) ? '收起原题图' : '查看原题图' }}
+          </button>
         </div>
-        <div v-if="hasStemImage(q) && stemView[q.id] !== 'text'" class="img-card q-img">
-          <img :src="'/' + (q.stem_image_path || q.image_path)" alt="题目图" />
+        <div v-if="hasStemImage(q) && isStemImageOpen(q)" class="img-card q-img expanded" @click="openZoom(q)">
+          <img :src="'/' + (q.stem_image_path || q.image_path)" alt="题目原图" loading="lazy" />
         </div>
-        <div v-else class="stem-box"><MarkdownView :text="q.stem" /></div>
 
         <!-- 客观题 -->
         <template v-if="q.is_objective && q.options?.length">
@@ -718,6 +730,14 @@ const judgeOf = (qid) => (judgeResult.value?.detail || []).find((d) => d.questio
         </template>
       </section>
     </template>
+
+    <!-- 原题图放大（点击关闭） -->
+    <teleport to="body">
+      <div v-if="zoomSrc" class="zoom-mask" @click="zoomSrc = ''">
+        <img :src="zoomSrc" alt="题目原图" />
+        <span class="zoom-hint">点击任意处关闭</span>
+      </div>
+    </teleport>
   </div>
 </template>
 
@@ -996,25 +1016,80 @@ const judgeOf = (qid) => (judgeResult.value?.detail || []).find((d) => d.questio
   letter-spacing: -0.01em;
 }
 
-.stem-switch {
+/* 原题图开关：默认收起，题干只显示文字版 */
+.stem-img-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.stem-img-btn {
   display: inline-flex;
-  margin-bottom: 9px;
-}
-
-.seg.mini {
-  padding: 3px;
-  border-radius: 11px;
-}
-
-.seg.mini button {
-  flex: 0 0 auto;
-  padding: 5px 12px;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink-2);
+  font: inherit;
   font-size: 12px;
+  cursor: pointer;
+  transition: color 0.16s var(--ease), border-color 0.16s var(--ease), background 0.16s var(--ease);
+}
+
+.stem-img-btn:hover,
+.stem-img-btn.on {
+  border-color: var(--brand);
+  color: var(--brand);
+  background: var(--brand-weak);
 }
 
 .q-img {
   max-height: 340px;
   overflow: hidden;
+}
+
+/* 展开态：用户主动点开核对原题，必须完整可读，不能再截断 */
+.q-img.expanded {
+  max-height: none;
+  overflow: visible;
+}
+
+.q-img.expanded img {
+  max-height: none;
+  height: auto;
+  object-fit: contain;
+  cursor: zoom-in;
+}
+
+/* 放大层：题干切图多为 684px 宽，按接近原尺寸显示（超出可横向滚动），别再用 100% 压回去 */
+.zoom-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  padding: 16px;
+  background: rgba(12, 16, 28, 0.9);
+  overflow: auto;
+  cursor: zoom-out;
+}
+
+.zoom-mask img {
+  display: block;
+  width: 640px;
+  max-width: none;
+  height: auto;
+  margin: 6vh auto 0;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.zoom-hint {
+  display: block;
+  margin-top: 12px;
+  text-align: center;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.72);
 }
 
 .q-img img {

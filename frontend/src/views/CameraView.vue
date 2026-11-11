@@ -5,7 +5,9 @@ import { userId } from '../store/user'
 import MarkdownView from '../components/MarkdownView.vue'
 import Icon from '../components/Icon.vue'
 
-const fileInput = ref(null)
+// 两个独立入口：带 capture 的直接唤起相机，不带的走系统相册选择
+const cameraInput = ref(null)
+const galleryInput = ref(null)
 const preview = ref('') // 本地预览 URL
 const pickedFile = ref(null)
 const busy = ref(false)
@@ -49,8 +51,12 @@ const shownAnswer = computed(() => {
   return p?.answer || result.value?.answer || ''
 })
 
-function chooseFile() {
-  fileInput.value?.click()
+function shootPhoto() {
+  cameraInput.value?.click()
+}
+
+function chooseFromGallery() {
+  galleryInput.value?.click()
 }
 
 async function onFile(e) {
@@ -137,7 +143,8 @@ async function doFeedback(solved = false) {
 
 <template>
   <div class="screen">
-    <input ref="fileInput" type="file" accept="image/*" capture="environment" hidden @change="onFile" />
+    <input ref="cameraInput" type="file" accept="image/*" capture="environment" hidden @change="onFile" />
+    <input ref="galleryInput" type="file" accept="image/*" hidden @change="onFile" />
 
     <!-- 首屏引导 -->
     <section v-if="!busy && !result && !error" class="hero">
@@ -160,18 +167,28 @@ async function doFeedback(solved = false) {
     <!-- 采集区 -->
     <section v-if="!result || busy" class="card capture">
       <template v-if="!preview">
-        <button type="button" class="dropzone" @click="chooseFile">
-          <span class="dz-ico"><Icon name="camera" :size="26" :stroke="1.7" /></span>
-          <b>拍下题目，或从相册选择</b>
-          <span class="dz-sub">支持 JPG / PNG，题干与公式都能识别</span>
-        </button>
+        <div class="pick-row">
+          <button type="button" class="dropzone" @click="shootPhoto">
+            <span class="dz-ico"><Icon name="camera" :size="26" :stroke="1.7" /></span>
+            <b>拍下题目</b>
+            <span class="dz-sub">对准题目，四角拍全</span>
+          </button>
+          <button type="button" class="dropzone alt" @click="chooseFromGallery">
+            <span class="dz-ico alt"><Icon name="image" :size="26" :stroke="1.7" /></span>
+            <b>从相册选择</b>
+            <span class="dz-sub">支持 JPG / PNG</span>
+          </button>
+        </div>
       </template>
 
       <template v-else>
         <div class="shot-preview">
           <img :src="preview" class="preview" alt="题目预览" />
           <div class="shot-tools">
-            <button type="button" class="icon-btn" title="重新拍摄" @click="chooseFile">
+            <button type="button" class="icon-btn" title="从相册换一张" @click="chooseFromGallery">
+              <Icon name="image" :size="16" :stroke="2" />
+            </button>
+            <button type="button" class="icon-btn" title="重新拍摄" @click="shootPhoto">
               <Icon name="refresh" :size="16" :stroke="2" />
             </button>
             <button type="button" class="icon-btn" title="清空" @click="reset">
@@ -244,7 +261,7 @@ async function doFeedback(solved = false) {
       </div>
       <div class="banner err">{{ error }}</div>
       <div class="btn-row">
-        <button class="btn" @click="chooseFile">换一张</button>
+        <button class="btn" @click="reset">换一张</button>
         <button class="btn primary" @click="doAsk">重试</button>
       </div>
     </section>
@@ -257,7 +274,7 @@ async function doFeedback(solved = false) {
           <b>题目已上传</b>
           <span>换一张可以继续问</span>
         </div>
-        <button class="btn sm" @click="chooseFile">
+        <button class="btn sm" @click="reset">
           <Icon name="refresh" :size="14" :stroke="2" />
           换一题
         </button>
@@ -480,6 +497,36 @@ async function doFeedback(solved = false) {
 .dropzone:hover {
   border-color: var(--brand);
   background: var(--brand-weak);
+}
+
+/* 两个入口并排：拍照 / 相册。窄屏下改为上下堆叠，避免文字挤成两行 */
+.pick-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+@media (max-width: 359px) {
+  .pick-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.dropzone.alt {
+  border-style: solid;
+  border-color: var(--line);
+  background: var(--card);
+}
+
+.dropzone.alt:hover {
+  border-color: var(--brand);
+  background: var(--brand-weak);
+}
+
+.dz-ico.alt {
+  color: var(--brand);
+  background: var(--brand-weak);
+  box-shadow: none;
 }
 
 .dz-ico {
