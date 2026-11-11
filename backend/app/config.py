@@ -16,7 +16,10 @@ class Settings(BaseSettings):
     # DeepSeek 多模态大模型（API Key 在 backend/.env 的 DEEPSEEK_API_KEY 填入）
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_model: str = "ByteDance-volcengine/DeepSeek-V4.1-Flash"
+    # 模型名必须与 base_url 所属平台一致，否则 401 key_model_access_denied：
+    #   官方 API（api.deepseek.com）→ deepseek-flash（支持图片输入）
+    #   校内网关（xplt.sdu.edu.cn:4000，仅校园网）→ ByteDance-volcengine/DeepSeek-V4.1-Flash
+    deepseek_model: str = "deepseek-flash"
     deepseek_timeout: float = 60.0
     # 推理型模型的思考 token 也计入 max_tokens，偏小会导致正文为空
     # 推理型模型的思考 token 与正文共享该上限：设得太小会导致正文为空

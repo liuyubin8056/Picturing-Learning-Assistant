@@ -281,7 +281,7 @@ cd ../frontend && npm install && npm run dev  # 另开终端
 |---|---|---|
 | `DEEPSEEK_API_KEY` | 空 | 必填；不填时 AI 接口返回 503，其余功能正常 |
 | `DEEPSEEK_MAX_TOKENS` | `32000` | **推理模型思考 token 计入**，过小会导致正文为空 |
-| `DEEPSEEK_MODEL` | `ByteDance-volcengine/DeepSeek-V4.1-Flash` | 模型名，需与 Key 允许的模型一致（网关要求带厂商前缀） |
+| `DEEPSEEK_MODEL` | `deepseek-flash` | 模型名，必须与 `DEEPSEEK_BASE_URL` 属于同一平台（官方 API 用 `deepseek-flash`；校内网关用 `ByteDance-volcengine/DeepSeek-V4.1-Flash`） |
 | `DATABASE_URL` | `sqlite:///./dev.db` | 切 MySQL：`mysql+pymysql://user:pwd@host:3306/photo_tutor?charset=utf8mb4` |
 | `UPLOAD_DIR` | `./uploads` | 用户上传图片目录 |
 

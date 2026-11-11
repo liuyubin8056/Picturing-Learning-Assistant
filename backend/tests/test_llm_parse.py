@@ -89,3 +89,54 @@ def test_extract_content_truncated():
 def test_extract_content_no_choices():
     with pytest.raises(LLMCallError, match="无 choices"):
         extract_content({})
+
+
+# ---------- 结构不完整的 JSON：漏括号 / 截断 / 尾逗号（公网实测故障的回归测试） ----------
+#
+# 真实事故（2026-11-11 部署后）：模型输出以 `}}` 结尾，正确应为 `}}}`，
+# 旧逻辑解析失败后退化成纯文本，把整段 JSON 源码当讲解显示给学生，
+# 知识点与反馈候选（在 meta 里）全部丢失。
+
+MISSING_BRACE = (
+    '{"answer":"第一步：赋值法令 $x=1$ 得系数和。",'
+    '"problems":[{"no":"10","title":"求系数和","answer":"详解见上"}],'
+    '"meta":{"kp_tags":["二项式定理"],"difficulty":3,'
+    '"feedback_options":[{"tag":"careless","weight":0.2}]}'
+)
+
+TRUNCATED = '{"answer":"第一步：先求导 $f\'(x)=2x$，再令其为 0 得'
+
+TRAILING_COMMA = '{"answer":"结论：$a_7=1$","meta":{"kp_tags":["数列"],'
+
+
+def test_missing_closing_brace_is_repaired():
+    obj = _extract_json(MISSING_BRACE)
+    assert obj is not None
+    assert obj["answer"].startswith("第一步：赋值法")
+    assert obj["meta"]["kp_tags"] == ["二项式定理"]
+    assert obj["meta"]["difficulty"] == 3
+    assert obj["meta"]["feedback_options"][0]["tag"] == "careless"
+    assert obj["problems"][0]["no"] == "10"
+
+
+def test_truncated_output_keeps_partial_answer():
+    obj = _extract_json(TRUNCATED)
+    assert obj is not None
+    assert "第一步" in obj["answer"]
+    assert not obj["answer"].startswith("{")
+
+
+def test_trailing_comma_and_unclosed_object():
+    obj = _extract_json(TRAILING_COMMA)
+    assert obj is not None
+    assert obj["answer"] == "结论：$a_7=1$"
+    assert obj["meta"]["kp_tags"] == ["数列"]
+
+
+def test_repair_preserves_latex_backslashes():
+    """括号配平不能破坏 LaTeX：\\frac 解析后应还原为 \\frac，而不是被吃掉。"""
+    raw = '{"answer":"$$\\frac{1}{2}+\\cdots$$","meta":{"kp_tags":["分式"]}'
+    obj = _extract_json(raw)
+    assert obj is not None
+    assert "\\frac" in obj["answer"]
+    assert "\\cdots" in obj["answer"]

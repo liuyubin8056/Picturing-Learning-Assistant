@@ -140,15 +140,61 @@ def _escape_control_chars(text: str) -> str:
     return "".join(out)
 
 
+def _balance_json(text: str) -> str:
+    """补齐未闭合的字符串/对象/数组，让"结构不完整"的 JSON 也能解析。
+
+    模型偶发漏写一个右括号（实测一次答疑输出以 `}}` 结尾，正确应为 `}}}`），
+    或输出被 max_tokens 截断在字符串中间。这类文本语法上不完整，但内容可用，
+    直接丢弃会退化成一整段 JSON 源码显示给学生。
+    """
+    out = text.rstrip()
+    stack: list[str] = []
+    in_str = False
+    esc = False
+    for ch in out:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+        else:
+            if ch == '"':
+                in_str = True
+            elif ch in "{[":
+                stack.append(ch)
+            elif ch == "}" and stack and stack[-1] == "{":
+                stack.pop()
+            elif ch == "]" and stack and stack[-1] == "[":
+                stack.pop()
+
+    if in_str:
+        if esc:                       # 结尾是孤立反斜杠，会吃掉收尾引号
+            out = out[:-1]
+        out += '"'
+    for opener in reversed(stack):
+        out = re.sub(r",\s*$", "", out)   # 悬空尾逗号
+        out += "}" if opener == "{" else "]"
+    return out
+
+
 def _loads(text: str) -> dict | None:
-    """先严格解析，失败则转义修复后再解析。"""
+    """严格解析 → 转义修复 → 括号配平，三级递进。"""
     for candidate in (text, _escape_control_chars(text)):
         try:
             obj = json.loads(candidate)
             if isinstance(obj, dict):
                 return obj
         except json.JSONDecodeError:
-            continue
+            pass
+    repaired = _balance_json(_escape_control_chars(text))
+    try:
+        obj = json.loads(repaired)
+        if isinstance(obj, dict):
+            return obj
+    except json.JSONDecodeError:
+        pass
     return None
 
 
@@ -205,7 +251,8 @@ def _salvage(text: str) -> dict | None:
     if not m:
         return None
     body = text[m.end() :]
-    end = re.search(r'"\s*,\s*"meta"\s*:', body)
+    # answer 之后可能是 meta，也可能先出现 problems（多题照片）
+    end = re.search(r'"\s*,\s*"(?:meta|problems)"\s*:', body)
     if not end:
         # 没有 meta 段：取到下一个未转义的收尾引号
         close = re.search(r'"\s*\}\s*$', body)
