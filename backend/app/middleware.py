@@ -144,6 +144,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if path in _SKIP_EXACT or path.startswith(_SKIP_PREFIX):
             return await call_next(request)
 
+        # CORS 预检（OPTIONS）不计入限流：一次页面/接口调用可能伴随多条预检
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         limits = _match_rule(request.method, path)
         if limits:
             for limit, window in limits:

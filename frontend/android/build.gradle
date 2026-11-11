@@ -1,8 +1,13 @@
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
-
+//
+// 仓库顺序：阿里云镜像在前、官方在后。
+// 国内直连 dl.google.com / repo1.maven.org 经常超时，镜像拿不到时会自动回落到官方源。
 buildscript {
-    
+
     repositories {
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
         google()
         mavenCentral()
     }
@@ -19,6 +24,8 @@ apply from: "variables.gradle"
 
 allprojects {
     repositories {
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
         google()
         mavenCentral()
     }

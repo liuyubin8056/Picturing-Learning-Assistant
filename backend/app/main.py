@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -57,6 +58,21 @@ app = FastAPI(
 # 这样限流返回的 429 也会带 X-Request-ID，日志能对上。
 app.add_middleware(RateLimitMiddleware, enabled=True)
 app.add_middleware(RequestContextMiddleware)
+
+# CORS：给 Android/iOS 壳用。
+# 壳里的页面源是 https://localhost（Capacitor androidScheme），调远程 API 属跨域。
+# 壳走 Authorization: Bearer（不依赖 Cookie），所以不需要 allow_credentials，
+# 因此可以放开 *；Web 端同源访问本来就不经过 CORS。
+# 必须最后注册：add_middleware 后加的先执行，预检要在限流之前被处理。
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+    expose_headers=["Content-Disposition", "X-Request-ID"],
+    max_age=600,
+)
 
 
 @app.exception_handler(RequestValidationError)
