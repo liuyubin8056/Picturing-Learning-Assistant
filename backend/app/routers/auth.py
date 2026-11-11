@@ -116,10 +116,15 @@ async def send_email_code(
         raise HTTPException(503, f"邮件发送失败：{exc}") from exc
 
     s = get_settings()
+    # hint 里带出发件地址，用户才能把它加进联系人白名单（这是提高送达率最有效的一步）
     return SendCodeOut(
         sent=True,
         cooldown=s.auth_code_cooldown,
-        hint="验证码已发出，若 1 分钟内未收到请检查垃圾邮件",
+        hint=(
+            f"验证码已发出（发件人 {s.smtp_user}）。"
+            "若 1 分钟内未收到，请检查「垃圾邮件 / 广告邮件」文件夹，"
+            "并把发件人标记为「不是垃圾邮件」或加入联系人。"
+        ),
         # console 模式（本地开发）回显，方便不联网联调；生产走 smtp 时为 None
         debug_code=None if delivered else code,
     )

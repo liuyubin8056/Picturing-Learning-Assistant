@@ -165,6 +165,14 @@ function finish() {
           <Icon name="send" :size="16" :stroke="1.9" />
           {{ busy ? '发送中…' : '发送验证码' }}
         </button>
+
+        <p class="mail-note">
+          <Icon name="info" :size="13" :stroke="1.9" />
+          <span>
+            验证邮件有时会被邮箱服务商误判为垃圾邮件。发送后若收件箱里没有，
+            请到「<b>垃圾邮件 / 广告邮件</b>」里一并查找，并把它标记为「不是垃圾邮件」。
+          </span>
+        </p>
       </template>
 
       <!-- 步骤二：验证码 -->
@@ -189,10 +197,13 @@ function finish() {
           aria-label="验证码"
           @keyup.enter="doLogin"
         />
-        <p v-if="hint" class="hint" style="margin-top: 8px">{{ hint }}</p>
-        <p class="muted" style="font-size: 12px; margin: 6px 0 0">
+        <div v-if="hint" class="banner warn" style="margin: 10px 0 0">
+          <Icon name="alert" :size="15" :stroke="2" />
+          <span>{{ hint }}</span>
+        </div>
+        <p class="resend-tip">
           <Icon name="info" :size="12" :stroke="1.9" />
-          没收到？先看看垃圾邮件；{{ cooldown > 0 ? `${cooldown} 秒后可重发` : '可以重新发送' }}
+          <span>{{ cooldown > 0 ? `${cooldown} 秒后可重新发送` : '还没收到？可以点「重新发送」再试一次' }}</span>
         </p>
 
         <div class="btn-row" style="margin-top: 14px">
@@ -380,6 +391,40 @@ function finish() {
   text-align: center;
   font-size: 20px;
   font-weight: 700;
+}
+
+/* 垃圾邮件提醒：常驻展示，发送前就告知，避免用户以为没发出去 */
+.mail-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--warn-weak);
+  color: var(--warn-ink);
+  font-size: 11.5px;
+  line-height: 1.62;
+}
+.mail-note :deep(svg) {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+.mail-note b {
+  font-weight: 650;
+}
+
+/* 重发倒计时：图标与文字必须同一行（p 默认不是 flex，图标会独占一行） */
+.resend-tip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 9px 0 0;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.resend-tip :deep(svg) {
+  flex: 0 0 auto;
 }
 
 .demo-card {
