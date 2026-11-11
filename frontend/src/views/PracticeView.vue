@@ -1074,8 +1074,10 @@ const judgeOf = (qid) => (judgeResult.value?.detail || []).find((d) => d.questio
   position: fixed;
   inset: 0;
   z-index: 90;
+  display: flex;
+  flex-direction: column;
   padding: 16px;
-  background: rgba(12, 16, 28, 0.9);
+  background: rgba(12, 16, 28, 0.92);
   overflow: auto;
   cursor: zoom-out;
 }
@@ -1085,14 +1087,16 @@ const judgeOf = (qid) => (judgeResult.value?.detail || []).find((d) => d.questio
   width: 640px;
   max-width: none;
   height: auto;
-  margin: 6vh auto 0;
+  /* margin:auto 在 flex 容器里既能水平居中、又能在内容超高时正常滚动 */
+  margin: auto;
   border-radius: 10px;
   background: #fff;
 }
 
 .zoom-hint {
   display: block;
-  margin-top: 12px;
+  flex: 0 0 auto;
+  margin: 12px 0 4px;
   text-align: center;
   font-size: 12px;
   color: rgba(255, 255, 255, 0.72);

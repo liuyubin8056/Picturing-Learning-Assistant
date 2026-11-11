@@ -14,7 +14,17 @@ from fastapi.staticfiles import StaticFiles
 from .config import get_settings
 from .db import init_db
 from .middleware import RateLimitMiddleware, RequestContextMiddleware
-from .routers import diagnose, health, kb, profile, questions, tests, tokens, uploads
+from .routers import (
+    admin,
+    diagnose,
+    health,
+    kb,
+    profile,
+    questions,
+    tests,
+    tokens,
+    uploads,
+)
 from .routers import auth as auth_router
 from .storage import get_storage
 
@@ -42,9 +52,61 @@ _setup_logging()
 
 
 @asynccontextmanager
+def _sync_admins() -> None:
+    """按 ADMIN_EMAILS 给账号打管理员标记（改 .env 重启即生效）。"""
+    from sqlmodel import Session, select
+
+    from .db import engine
+    from .models import User
+    from .services import auth_service as auth
+
+    raw = (get_settings().admin_emails or "").strip()
+    emails = [auth.normalize_email(e) for e in raw.split(",") if e.strip()]
+    if not emails:
+        return
+    with Session(engine) as s:
+        for email in emails:
+            u = auth.get_user_by_email(s, email)
+            if u and not u.is_admin:
+                u.is_admin = True
+                s.add(u)
+                print(f"[admin] 已授予管理员：{email}")
+        s.commit()
+
+
+async def _usage_flusher() -> None:
+    """每 60 秒把访问计数落库；进程退出时再冲一次，避免丢最后一段。"""
+    import asyncio
+
+    from sqlmodel import Session
+
+    from .db import engine
+    from .services import usage_counter
+
+    try:
+        while True:
+            await asyncio.sleep(60)
+            try:
+                with Session(engine) as s:
+                    usage_counter.flush(s)
+            except Exception as e:      # 计数失败不能影响服务
+                print(f"[usage] flush failed: {e}")
+    except asyncio.CancelledError:
+        with Session(engine) as s:
+            usage_counter.flush(s)
+        raise
+
+
 async def lifespan(app: FastAPI):
+    import asyncio
+
     init_db()
-    yield
+    _sync_admins()
+    task = asyncio.create_task(_usage_flusher())
+    try:
+        yield
+    finally:
+        task.cancel()
 
 
 app = FastAPI(
@@ -105,6 +167,7 @@ app.include_router(tests.wb_router)   # F 错题本
 app.include_router(tokens.router)     # token 计量
 app.include_router(auth_router.router)  # 账户（邮箱验证码登录）
 app.include_router(uploads.router)      # 分片上传（断点续传）
+app.include_router(admin.router)        # 管理后台（仅管理员）
 
 # 题目图片静态服务（MVP 本地存储；get_storage 构造时确保目录存在）
 _storage = get_storage()

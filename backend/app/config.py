@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # ---- 认证 ----
     auth_cookie_name: str = "spl_token"
     auth_token_days: int = 30
+    # 管理员邮箱（逗号分隔）。启动时自动给这些邮箱的账号打 is_admin，
+    # 新增管理员只需改 .env 后重启，不用动数据库。
+    admin_emails: str = ""
     log_level: str = "INFO"
     # 烧钱接口限流（每分钟 6 次等）。测试环境关掉，避免用例之间互相挤额度。
     rate_limit_enabled: bool = True            # 令牌有效期

@@ -10,6 +10,7 @@ import DiagnoseView from './views/DiagnoseView.vue'
 import ProfileView from './views/ProfileView.vue'
 import LoginView from './views/LoginView.vue'
 import PrivacyView from './views/PrivacyView.vue'
+import AdminView from './views/AdminView.vue'
 import { authReady, bootstrapAuth, currentUser } from './store/user'
 
 const router = createRouter({
@@ -25,6 +26,12 @@ const router = createRouter({
       path: '/privacy',
       component: PrivacyView,
       meta: { title: '隐私政策', public: true },
+    },
+    {
+      // 管理后台：专属地址，自己处理登录（不经过主壳的守卫）
+      path: '/admin',
+      component: AdminView,
+      meta: { title: '管理后台', public: true },
     },
     {
       path: '/camera',

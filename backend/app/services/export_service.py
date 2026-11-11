@@ -222,3 +222,233 @@ def export_user_data(session: Session, user: User) -> dict:
             for u in usage
         ],
     }
+
+# ============================================================
+# 文件名与导入
+# ============================================================
+
+
+def _safe_name(text: str | None, fallback: str = "用户") -> str:
+    """文件名里不能出现路径分隔符与 Windows 保留字符。"""
+    if not text:
+        return fallback
+    for ch in '\\/:*?"<>|\n\r\t':
+        text = text.replace(ch, "")
+    return text.strip()[:24] or fallback
+
+
+def suggest_filename(user: User) -> str:
+    """导出文件名：昵称 + 精确到秒的时间，便于用户区分数据新旧。"""
+    name = _safe_name(user.nickname, f"user{user.id}")
+    # 用本地时间：用户看文件名想对应"我什么时候导的"
+    ts = utcnow().astimezone().strftime("%Y%m%d-%H%M%S")
+    return f"学习数据-{name}-{ts}.json"
+
+
+def _parse_dt(value: str | None):
+    if not value:
+        return None
+    try:
+        from datetime import datetime
+
+        return datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def import_user_data(
+    session: Session, user: User, payload: dict, mode: str = "merge"
+) -> dict:
+    """把导出的 JSON 导回账号。
+
+    mode = merge   ：与现有数据合并（掌握度取较高分、错题累加、答疑按幂等 ID 去重）
+    mode = replace ：先清空该账号的学习数据，再全量恢复（账户本身不删）
+
+    只接受本系统导出的结构；缺失字段一律跳过，不因单条坏数据整体失败。
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("文件内容不是有效的 JSON 对象")
+    if payload.get("schema_version") not in (None, SCHEMA_VERSION):
+        raise ValueError("数据文件版本不兼容，请使用本系统导出的文件")
+
+    uid = user.id
+    stats = {"mastery": 0, "wrong_books": 0, "questions": 0, "test_sessions": 0}
+
+    if mode == "replace":
+        for model in (Mastery, WrongBook, Question, TestQuestion, DiagnosisReport):
+            if model is TestQuestion:
+                continue
+            for row in session.exec(select(model).where(model.user_id == uid)).all():
+                session.delete(row)
+        # 练习会话：先删题目再删会话
+        for ts in session.exec(
+            select(TestSession).where(TestSession.user_id == uid)
+        ).all():
+            for tq in session.exec(
+                select(TestQuestion).where(TestQuestion.session_id == ts.id)
+            ).all():
+                session.delete(tq)
+            session.delete(ts)
+        session.commit()
+
+    # ---- 掌握度 ----
+    for item in payload.get("mastery") or []:
+        kp_id = item.get("kp_id")
+        if not kp_id:
+            continue
+        row = session.exec(
+            select(Mastery).where(Mastery.user_id == uid, Mastery.kp_id == kp_id)
+        ).first()
+        if row:
+            row.score = max(row.score or 0.0, float(item.get("score") or 0))
+            row.ask_count = max(row.ask_count or 0, int(item.get("ask_count") or 0))
+            row.wrong_count = max(row.wrong_count or 0, int(item.get("wrong_count") or 0))
+            row.right_count = max(row.right_count or 0, int(item.get("right_count") or 0))
+            row.feedback_count = max(
+                row.feedback_count or 0, int(item.get("feedback_count") or 0)
+            )
+            row.last_active_at = _parse_dt(item.get("last_active_at")) or row.last_active_at
+            session.add(row)
+        else:
+            session.add(
+                Mastery(
+                    user_id=uid,
+                    kp_id=kp_id,
+                    score=float(item.get("score") or 0),
+                    ask_count=int(item.get("ask_count") or 0),
+                    wrong_count=int(item.get("wrong_count") or 0),
+                    right_count=int(item.get("right_count") or 0),
+                    feedback_count=int(item.get("feedback_count") or 0),
+                    error_tags=json.dumps(item.get("error_tags") or [], ensure_ascii=False),
+                    custom_notes=item.get("custom_notes"),
+                    last_active_at=_parse_dt(item.get("last_active_at")),
+                )
+            )
+        stats["mastery"] += 1
+
+    # ---- 错题本（按题库题目合并）----
+    for item in payload.get("wrong_books") or []:
+        kb_id = item.get("kb_problem_id")
+        stem = item.get("stem")
+        if not kb_id and not stem:
+            continue
+        row = None
+        if kb_id:
+            row = session.exec(
+                select(WrongBook).where(
+                    WrongBook.user_id == uid, WrongBook.kb_problem_id == kb_id
+                )
+            ).first()
+        if row:
+            row.wrong_count = (row.wrong_count or 0) + int(item.get("wrong_count") or 1)
+            # 任一方未掌握就保持待攻克
+            if (row.status or "pending") == "pending" or item.get("status") == "pending":
+                row.status = "pending"
+            session.add(row)
+        else:
+            session.add(
+                WrongBook(
+                    user_id=uid,
+                    source=item.get("source") or "import",
+                    kb_problem_id=kb_id,
+                    stem=stem,
+                    answer=item.get("answer"),
+                    solution=item.get("solution"),
+                    error_tags=json.dumps(item.get("error_tags") or [], ensure_ascii=False),
+                    kp_ids=json.dumps(item.get("kp_ids") or []),
+                    status=item.get("status") or "pending",
+                    wrong_count=int(item.get("wrong_count") or 1),
+                    last_wrong_at=_parse_dt(item.get("last_wrong_at")),
+                )
+            )
+        stats["wrong_books"] += 1
+
+    # ---- 答疑记录（按幂等 ID 去重，避免合并出重复题）----
+    existing_cids = {
+        c
+        for c in session.exec(
+            select(Question.client_question_id).where(Question.user_id == uid)
+        ).all()
+        if c
+    }
+    for item in payload.get("questions") or []:
+        cid = item.get("client_question_id")
+        if cid and cid in existing_cids:
+            continue
+        if not item.get("answer"):
+            continue
+        session.add(
+            Question(
+                user_id=uid,
+                client_question_id=cid or f"import-{utcnow().timestamp()}",
+                status=item.get("status") or "answered",
+                # image_path 在模型里非空；导入外部文件时可能缺失，用空串占位
+                image_path=item.get("image_path") or "",
+                answer=item.get("answer"),
+                meta_json=json.dumps(item.get("meta"), ensure_ascii=False)
+                if item.get("meta")
+                else None,
+                problems_json=json.dumps(item.get("problems"), ensure_ascii=False)
+                if item.get("problems")
+                else None,
+                feedback_result=json.dumps(item.get("feedback"), ensure_ascii=False)
+                if item.get("feedback")
+                else None,
+                created_at=_parse_dt(item.get("created_at")) or utcnow(),
+                answered_at=_parse_dt(item.get("answered_at")),
+            )
+        )
+        stats["questions"] += 1
+
+    # ---- 练习会话（作为历史导入）----
+    for item in payload.get("test_sessions") or []:
+        created = _parse_dt(item.get("created_at"))
+        title = item.get("title") or "导入的练习"
+        dup = session.exec(
+            select(TestSession).where(
+                TestSession.user_id == uid, TestSession.title == title
+            )
+        ).first()
+        if dup:
+            continue
+        ts = TestSession(
+            user_id=uid,
+            title=title,
+            purpose=item.get("purpose") or "import",
+            kp_ids=json.dumps(item.get("kp_ids") or []),
+            total_count=int(item.get("total_count") or 0),
+            right_count=int(item.get("right_count") or 0),
+            wrong_count=int(item.get("wrong_count") or 0),
+            score=item.get("score"),
+            status=item.get("status") or "submitted",
+            created_at=created or utcnow(),
+            submitted_at=_parse_dt(item.get("submitted_at")),
+        )
+        session.add(ts)
+        session.commit()
+        session.refresh(ts)
+        for q in item.get("questions") or []:
+            session.add(
+                TestQuestion(
+                    session_id=ts.id,
+                    kb_problem_id=q.get("kb_problem_id"),
+                    order_no=int(q.get("order_no") or 1),
+                    stem=q.get("stem"),
+                    options=json.dumps(q.get("options"), ensure_ascii=False)
+                    if q.get("options")
+                    else None,
+                    answer=q.get("answer"),
+                    solution=q.get("solution"),
+                    kp_ids=json.dumps(q.get("kp_ids") or []),
+                    question_type=q.get("question_type"),
+                    difficulty=q.get("difficulty"),
+                    user_answer=q.get("user_answer"),
+                    is_correct=q.get("is_correct"),
+                    judged_by=q.get("judged_by"),
+                    answered_at=_parse_dt(q.get("answered_at")),
+                )
+            )
+        stats["test_sessions"] += 1
+
+    session.commit()
+    return {"mode": mode, "imported": stats}

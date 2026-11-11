@@ -8,10 +8,14 @@ import {
   listTests,
   setNickname,
   logout as apiLogout,
-  exportMyData,
+  demoLogin as apiDemoLogin,
+  fetchExportData,
+  importMyData,
+  fallbackFilename,
   mediaUrl,
 } from '../api'
-import { userId, setUserId, currentUser, clearLogin } from '../store/user'
+import { saveJsonFile, readJsonFile } from '../utils/saveFile'
+import { userId, setUserId, currentUser, clearLogin, applyLogin } from '../store/user'
 import { useRouter } from 'vue-router'
 import { mode, setMode } from '../store/theme'
 import MarkdownView from '../components/MarkdownView.vue'
@@ -109,12 +113,86 @@ async function saveName() {
   }
 }
 
+// ---------- 导出 ----------
+const showExport = ref(false)
+const exportBusy = ref(false)
+const lastSaved = ref('')
+
+function openExport() {
+  lastSaved.value = ''
+  showExport.value = true
+}
+
 async function doExport() {
+  exportBusy.value = true
   try {
-    await exportMyData()
-    window.__toast?.('数据已开始下载')
+    const { blob, filename } = await fetchExportData()
+    const r = await saveJsonFile({ blob, filename })
+    lastSaved.value = `${r.path || '已保存'}（${filename}）`
+    window.__toast?.('数据已导出')
   } catch (e) {
     window.__toast?.(e.message || '导出失败')
+  } finally {
+    exportBusy.value = false
+  }
+}
+
+// ---------- 导入 ----------
+const importInput = ref(null)
+const importing = ref(false)
+const pendingImport = ref(null)   // { data, summary, filename }
+const importMode = ref('merge')
+
+function pickImport() {
+  importInput.value?.click()
+}
+
+async function onImportFile(e) {
+  const f = e.target.files?.[0]
+  e.target.value = ''
+  if (!f) return
+  importing.value = true
+  try {
+    const data = await readJsonFile(f)
+    if (!data || typeof data !== 'object' || !('summary' in data)) {
+      throw new Error('这不是本系统导出的数据文件')
+    }
+    pendingImport.value = { data, filename: f.name, summary: data.summary || {} }
+    importMode.value = 'merge'
+  } catch (err) {
+    window.__toast?.(err.message || '文件解析失败')
+  } finally {
+    importing.value = false
+  }
+}
+
+async function confirmImport() {
+  if (!pendingImport.value) return
+  importing.value = true
+  try {
+    const r = await importMyData(importMode.value, pendingImport.value.data)
+    const n = r.imported || {}
+    window.__toast?.(
+      `导入完成：掌握度 ${n.mastery || 0}、错题 ${n.wrong_books || 0}、答疑 ${n.questions || 0}、练习 ${n.test_sessions || 0}`
+    )
+    pendingImport.value = null
+    load()
+  } catch (e) {
+    window.__toast?.(e.message || '导入失败')
+  } finally {
+    importing.value = false
+  }
+}
+
+// ---------- 管理员：进出演示账号 ----------
+async function enterDemo() {
+  try {
+    const r = await apiDemoLogin()
+    applyLogin(r)
+    window.__toast?.('已切换到演示账号')
+    router.replace('/camera')
+  } catch (e) {
+    window.__toast?.(e.message || '进入演示账号失败')
   }
 }
 
@@ -176,16 +254,23 @@ function emptyText() {
           <Icon name="pencil" :size="13" :stroke="1.9" /> 修改昵称
         </button>
         <button v-else class="chip" @click="editing = false">取消</button>
-        <button
-          v-if="currentUser?.is_demo"
-          class="chip"
-          :class="{ on: userId === DEMO_USER }"
-          @click="applyUser(DEMO_USER)"
-        >
-          演示数据 · {{ DEMO_USER }}
+        <button v-if="currentUser?.is_admin" class="chip brand" @click="enterDemo">
+          <Icon name="sparkles" :size="13" :stroke="2" /> 进入演示账号
         </button>
-        <button class="chip" @click="doExport">导出数据</button>
+        <button class="chip" @click="openExport">
+          <Icon name="upload" :size="13" :stroke="1.9" /> 导出数据
+        </button>
+        <button class="chip" :disabled="importing" @click="pickImport">
+          <Icon name="download" :size="13" :stroke="1.9" /> 导入数据
+        </button>
         <button class="chip danger" @click="doLogout">退出登录</button>
+        <input
+          ref="importInput"
+          type="file"
+          accept=".json,application/json"
+          hidden
+          @change="onImportFile"
+        />
       </div>
       <p class="hint user-hint">
         <template v-if="currentUser?.is_demo">
@@ -193,6 +278,7 @@ function emptyText() {
         </template>
         <template v-else>
           数据保存在后端数据库，换设备后用邮箱验证码登录即可继续。
+          换手机或重装 App 前，建议先「导出数据」留一份备份。
         </template>
       </p>
     </section>
@@ -378,6 +464,89 @@ function emptyText() {
         <p class="hint theme-note">深色模式在夜间刷题更护眼；选择「跟随系统」时会随手机或电脑自动切换。</p>
       </section>
     </template>
+
+    <!-- 导出说明：先把"存哪儿、什么格式、别丢"讲清楚，再让用户点 -->
+    <teleport to="body">
+      <div v-if="showExport" class="dlg-mask" @click.self="showExport = false">
+        <div class="dlg">
+          <h3>导出学习数据</h3>
+          <ul class="dlg-list">
+            <li><b>格式</b>：JSON（纯文本，可用记事本或任意编辑器打开查看）</li>
+            <li>
+              <b>文件名</b>：<code>{{ fallbackFilename(currentUser?.nickname) }}</code><br />
+              <span class="dlg-sub">含昵称与精确到秒的时间，便于区分新旧备份</span>
+            </li>
+            <li>
+              <b>保存位置</b>：
+              <span class="dlg-sub">
+                网页端保存到浏览器「下载」目录（可在浏览器下载记录里打开）；
+                手机 App 优先存到手机「文档」目录，若系统限制则存到
+                Android/data/com.learnmate.app/files/导出 并弹出保存面板。
+              </span>
+            </li>
+            <li><b>内容</b>：账户、答疑记录、练习与作答、错题本、掌握度、诊断报告、用量统计</li>
+            <li class="dlg-warn">
+              文件内含你的学习记录，请妥善保存，不要随意发给他人或上传到公开网盘。
+            </li>
+          </ul>
+
+          <div v-if="lastSaved" class="dlg-done">
+            <Icon name="check" :size="15" :stroke="2.6" />
+            <div>
+              <b>已保存</b>
+              <div class="dlg-sub">{{ lastSaved }}</div>
+            </div>
+          </div>
+
+          <div class="dlg-actions">
+            <button class="btn ghost" @click="showExport = false">关闭</button>
+            <button class="btn primary" :disabled="exportBusy" @click="doExport">
+              {{ exportBusy ? '导出中…' : lastSaved ? '再导一份' : '开始导出' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </teleport>
+
+    <!-- 导入确认：先亮出"这份文件里有什么"，再让用户选合并还是覆盖 -->
+    <teleport to="body">
+      <div v-if="pendingImport" class="dlg-mask" @click.self="pendingImport = null">
+        <div class="dlg">
+          <h3>导入学习数据</h3>
+          <p class="dlg-file">{{ pendingImport.filename }}</p>
+          <ul class="dlg-list">
+            <li>答疑 {{ pendingImport.summary.questions || 0 }} 条</li>
+            <li>练习 {{ pendingImport.summary.test_sessions || 0 }} 份（题目 {{ pendingImport.summary.test_questions || 0 }} 道）</li>
+            <li>错题 {{ pendingImport.summary.wrong_books || 0 }} 条</li>
+            <li>知识点掌握 {{ pendingImport.summary.mastery_points || 0 }} 个</li>
+          </ul>
+
+          <div class="dlg-choice">
+            <label :class="{ on: importMode === 'merge' }">
+              <input v-model="importMode" type="radio" value="merge" />
+              <div>
+                <b>合并到当前数据</b>
+                <span class="dlg-sub">掌握度取较高分、错题累加、答疑按题目去重，不删现有记录（推荐）</span>
+              </div>
+            </label>
+            <label :class="{ on: importMode === 'replace' }">
+              <input v-model="importMode" type="radio" value="replace" />
+              <div>
+                <b>覆盖当前数据</b>
+                <span class="dlg-sub">先清空现有学习记录再导入，账户本身不受影响。此操作不可恢复</span>
+              </div>
+            </label>
+          </div>
+
+          <div class="dlg-actions">
+            <button class="btn ghost" @click="pendingImport = null">取消</button>
+            <button class="btn primary" :disabled="importing" @click="confirmImport">
+              {{ importing ? '导入中…' : '确认导入' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </teleport>
   </div>
 </template>
 
@@ -860,5 +1029,120 @@ html[data-theme='dark'] .card-ico.violet {
 }
 .chip.danger:hover {
   background: var(--err-weak);
+}
+/* ---------- 导出 / 导入对话框 ---------- */
+.dlg-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(12, 16, 28, 0.55);
+  backdrop-filter: blur(3px);
+}
+
+.dlg {
+  width: 100%;
+  max-width: 420px;
+  max-height: 84vh;
+  overflow: auto;
+  padding: 18px 18px 14px;
+  border-radius: 18px;
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 24px 60px -20px rgba(10, 16, 32, 0.5);
+}
+
+.dlg h3 {
+  margin: 0 0 10px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.dlg-list {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--ink-2);
+}
+
+.dlg-list code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--card-2);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.dlg-sub {
+  display: inline-block;
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+
+.dlg-warn {
+  color: var(--err);
+}
+
+.dlg-done {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--ok-weak);
+  color: var(--ok);
+  font-size: 13px;
+}
+
+.dlg-file {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--ink-3);
+  word-break: break-all;
+}
+
+.dlg-choice {
+  display: grid;
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+
+.dlg-choice label {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 13.5px;
+}
+
+.dlg-choice label.on {
+  border-color: var(--brand);
+  background: var(--brand-weak);
+}
+
+.dlg-choice input {
+  margin-top: 3px;
+  accent-color: var(--brand);
+}
+
+.dlg-choice b {
+  display: block;
+  font-weight: 650;
+}
+
+.dlg-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
 }
 </style>

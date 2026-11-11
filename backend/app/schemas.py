@@ -34,6 +34,7 @@ class UserOut(BaseModel):
     email_masked: str | None = None
     nickname: str | None = None
     is_demo: bool = False
+    is_admin: bool = False
     consent_at: datetime | None = None
     created_at: datetime
 
@@ -76,3 +77,9 @@ class LoginOut(BaseModel):
     token: str | None = None        # 仅 App 端（X-Client: app）返回；Web 走 httpOnly Cookie
     expires_in: int | None = None
     is_new: bool = False            # 首次登录自动注册
+
+
+class ImportIn(BaseModel):
+    # merge：与现有数据合并；replace：先清空再恢复
+    mode: str = "merge"
+    data: dict

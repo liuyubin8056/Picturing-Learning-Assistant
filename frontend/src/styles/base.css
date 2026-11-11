@@ -185,6 +185,12 @@ p {
   overflow: hidden;
 }
 
+/* 管理后台：桌面端页面，放开移动端的 480px 限制 */
+.app-shell.wide {
+  max-width: 100%;
+}
+
+
 @supports (height: 100dvh) {
   .app-shell {
     height: 100dvh;

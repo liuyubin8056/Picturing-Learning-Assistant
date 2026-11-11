@@ -29,6 +29,7 @@ from ..models import (
 )
 from ..schemas import (
     CodeLoginIn,
+    ImportIn,
     LoginOut,
     PasswordLoginIn,
     SendCodeIn,
@@ -53,6 +54,7 @@ def _user_out(u: User) -> UserOut:
         email_masked=auth.mask_email(u.email) if u.email else None,
         nickname=u.nickname,
         is_demo=bool(u.is_demo),
+        is_admin=bool(u.is_admin),
         consent_at=u.consent_at,
         created_at=u.created_at,
     )
@@ -283,11 +285,19 @@ def demo_login(
     request: Request,
     response: Response,
     x_client: str | None = Header(None),
+    me: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
+    """进入演示账号：**必须已登录且是管理员**。
+
+    原先这里是无鉴权的"一键进入"，等于把演示账号当后门（它能看到所有用户数据）。
+    现在改成管理员专属，普通用户只能用邮箱验证码登录自己的账号。
+    """
     s = get_settings()
     if not s.allow_demo_login:
         raise HTTPException(403, "演示登录已关闭")
+    if not me.is_admin:
+        raise HTTPException(403, "仅管理员可进入演示账号")
     demo = session.get(User, 1001)
     if not demo:
         raise HTTPException(404, "演示账号不存在（先运行种子脚本）")
@@ -358,12 +368,41 @@ def export_my_data(
     """
     data = export_service.export_user_data(session, me)
     body = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
-    filename = f"learnmate-{me.id}-{utcnow().strftime('%Y%m%d')}.json"
+    filename = export_service.suggest_filename(me)
+    # 中文文件名不能直接放 HTTP 头（头字段只允许 latin-1），必须 RFC 5987 编码；
+    # 同时给一个 ASCII 兜底名，老浏览器读不到 filename* 时也不会存成乱码。
+    from urllib.parse import quote
+
+    ascii_name = f"learnmate-{me.id}.json"
     return Response(
         content=body,
         media_type="application/json; charset=utf-8",
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": (
+                f'attachment; filename="{ascii_name}"; '
+                f"filename*=UTF-8''{quote(filename)}"
+            ),
             "Cache-Control": "no-store",
         },
     )
+
+
+# ---------------- 数据导入 ----------------
+
+@router.post("/import", summary="导入学习数据（可合并或覆盖）")
+def import_my_data(
+    payload: ImportIn,
+    me: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """把导出的 JSON 导回账号。
+
+    merge  ：掌握度取较高分、错题累加、答疑按幂等 ID 去重、练习按标题去重
+    replace：先清空本人学习数据再恢复（账户本身不会删）
+    """
+    mode = payload.mode if payload.mode in ("merge", "replace") else "merge"
+    try:
+        result = export_service.import_user_data(session, me, payload.data, mode)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return result

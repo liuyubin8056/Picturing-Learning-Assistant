@@ -9,6 +9,8 @@ const router = useRouter()
 
 // 登录页与隐私政策页都是「无壳」页面：不显示顶栏/副标题/底栏
 const isBare = computed(() => !!route.meta.public)
+// 管理后台是桌面端页面，不受移动端 480px 宽度限制
+const isWide = computed(() => route.path === '/admin')
 
 const tabs = [
   { path: '/camera', icon: 'camera', label: '拍照' },
@@ -73,7 +75,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-shell" :class="{ wide: isWide }">
     <div ref="bodyEl" class="app-body">
       <header v-if="!isBare" class="appbar" :class="{ scrolled }">
         <router-link to="/camera" class="logo" aria-label="回到首页">

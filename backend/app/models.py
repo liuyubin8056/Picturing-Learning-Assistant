@@ -28,6 +28,8 @@ class User(SQLModel, table=True):
     password_hash: str | None = None      # pbkdf2_sha256（标准库实现，无需额外依赖）
     status: str = Field(default="active")  # active / locked / deleted
     is_demo: bool = Field(default=False)   # 演示账号（1001），免登录进入
+    # 管理员：可进演示账号、可看管理后台（按 ADMIN_EMAILS 自动授予）
+    is_admin: bool = Field(default=False, index=True)
     last_login_at: datetime | None = None
     # 隐私政策同意：合规要求「收集前告知并取得同意」。
     # 已有历史账号为空，下次登录时补记。
@@ -331,3 +333,18 @@ class UploadSession(SQLModel, table=True):
     stored_path: str | None = None            # 合并后的相对路径（/uploads/xxx.jpg 去掉前缀）
     created_at: datetime = Field(default_factory=utcnow, index=True)
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+class ApiHit(SQLModel, table=True):
+    """按人按天的接口访问计数（管理后台展示「API 访问量」）。
+
+    不逐条写库：SQLite 每次写都要 fsync，热路径上会拖慢响应。
+    内存累加、定时批量落盘，够用且不打扰主流程。
+    """
+
+    __tablename__ = "api_hits"
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(index=True)
+    day: str = Field(index=True)          # YYYY-MM-DD
+    count: int = Field(default=0)

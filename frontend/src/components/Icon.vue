@@ -33,6 +33,10 @@ const ICONS = {
   upload: {
     paths: ['M12 15.5V4', 'm7 9 5-5 5 5', 'M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3'],
   },
+  // 与 upload 相反：用于「导入数据」
+  download: {
+    paths: ['M12 4v11.5', 'm7 10.5 5 5 5-5', 'M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3'],
+  },
   check: { paths: ['M20 6 9 17l-5-5'] },
   'chevron-right': { paths: ['m9 18 6-6-6-6'] },
   'chevron-down': { paths: ['m6 9 6 6 6-6'] },

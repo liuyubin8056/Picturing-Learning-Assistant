@@ -157,27 +157,56 @@ export const demoLogin = () => request('/auth/demo-login', { method: 'POST' })
 
 // 导出我的全部数据（JSON 下载）。走 fetch 是因为要带 Cookie，
 // 且失败时能拿到后端的错误说明而不是一个空白页。
-export const exportMyData = async () => {
+/** 取导出数据：返回 { blob, filename }，由调用方决定存哪儿 */
+export async function fetchExportData() {
   const res = await authFetch('/auth/export', { timeout: 60000 })
   if (!res.ok) {
     let msg = `导出失败（HTTP ${res.status}）`
     try {
       const d = await res.json()
       if (d?.detail) msg = d.detail
-    } catch { /* 忽略解析失败 */ }
+    } catch {
+      /* 忽略解析失败 */
+    }
     throw new Error(msg)
   }
   const blob = await res.blob()
-  const name = `learnmate-我的数据-${new Date().toISOString().slice(0, 10)}.json`
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = name
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  return { blob, filename: filenameFromResponse(res) || fallbackFilename() }
 }
+
+/** 从 Content-Disposition 里取中文文件名（服务端用 RFC 5987 编码） */
+function filenameFromResponse(res) {
+  const raw = res.headers.get('Content-Disposition') || ''
+  const star = raw.match(/filename\*=UTF-8''([^;]+)/i)
+  if (star) {
+    try {
+      return decodeURIComponent(star[1])
+    } catch {
+      /* 继续尝试下一个 */
+    }
+  }
+  const plain = raw.match(/filename="([^"]+)"/i)
+  return plain ? plain[1] : ''
+}
+
+/** 拿不到响应头时的兜底名：昵称 + 秒级时间 */
+export function fallbackFilename(nickname) {
+  const d = new Date()
+  const p2 = (n) => String(n).padStart(2, '0')
+  const ts = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(
+    d.getMinutes()
+  )}${p2(d.getSeconds())}`
+  const name = (nickname || '我的数据').replace(/[\\/:*?"<>|]/g, '').slice(0, 24)
+  return `学习数据-${name}-${ts}.json`
+}
+
+/** 导入学习数据（mode: merge 合并 / replace 覆盖） */
+export const importMyData = (mode, data) =>
+  request('/auth/import', { method: 'POST', body: { mode, data }, timeout: 60000 })
+
+// ---------- 管理后台 ----------
+export const adminUsers = () => request('/admin/users')
+export const adminOverview = () => request('/admin/overview')
 
 // ---------- 答疑 ----------
 /** 答疑：file 直接上传；传 uploadId 则复用已合并的分片上传结果 */

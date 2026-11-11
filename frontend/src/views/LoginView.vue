@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { sendEmailCode, loginByCode, setNickname, demoLogin } from '../api'
+import { sendEmailCode, loginByCode, setNickname } from '../api'
 import { applyLogin } from '../store/user'
 import Icon from '../components/Icon.vue'
 
@@ -110,20 +110,6 @@ function finish() {
   router.replace(target)
 }
 
-async function enterDemo() {
-  busy.value = true
-  error.value = ''
-  try {
-    const r = await demoLogin()
-    applyLogin(r)
-    window.__toast?.('已进入演示账号')
-    finish()
-  } catch (e) {
-    error.value = e.message || '演示登录不可用（可能未开启或演示账号不存在）'
-  } finally {
-    busy.value = false
-  }
-}
 </script>
 
 <template>
@@ -253,19 +239,6 @@ async function enterDemo() {
         <Icon name="alert" :size="15" :stroke="2" />
         <span>{{ error }}</span>
       </div>
-    </section>
-
-    <section class="card demo-card">
-      <div class="card-head">
-        <span class="card-ico neutral"><Icon name="play" :size="20" /></span>
-        <div class="card-head-text">
-          <div class="card-title">先看看效果</div>
-          <div class="card-sub">演示账号自带一周学习数据，可以随便点</div>
-        </div>
-      </div>
-      <button class="btn block" :disabled="busy" @click="enterDemo">
-        进入演示账号
-      </button>
     </section>
 
     <p class="foot">

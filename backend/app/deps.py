@@ -12,6 +12,7 @@ from .config import get_settings
 from .db import get_session
 from .models import User
 from .services import auth_service as auth
+from .services import usage_counter
 
 COOKIE_NAME = "spl_token"
 
@@ -45,6 +46,8 @@ async def current_user(
     user = session.get(User, row.user_id)
     if not user or user.status != "active":
         raise HTTPException(status_code=401, detail="账号不可用")
+    # 管理后台的「API 访问量」靠这行计数（内存累加，不阻塞请求）
+    usage_counter.hit(user.id)
     return user
 
 
@@ -89,3 +92,10 @@ def ensure_owner(user_id: int | None, me: User) -> int:
     if me.is_demo and get_settings().allow_demo_cross_access:
         return user_id
     raise HTTPException(status_code=403, detail="无权操作他人数据")
+
+
+def require_admin(me: User = Depends(current_user)) -> User:
+    """管理后台专用：非管理员一律 403，不泄露后台存在性之外的任何信息。"""
+    if not me.is_admin:
+        raise HTTPException(status_code=403, detail="仅管理员可访问")
+    return me
