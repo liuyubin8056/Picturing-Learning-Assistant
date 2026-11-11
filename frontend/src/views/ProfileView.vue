@@ -1,8 +1,15 @@
 <script setup>
 import { computed, ref, onMounted } from 'vue'
 import {
-  getWrongbook, markMastered, getProfile, listQuestions, listTests,
-  setNickname, logout as apiLogout, exportMyData,
+  getWrongbook,
+  markMastered,
+  getProfile,
+  listQuestions,
+  listTests,
+  setNickname,
+  logout as apiLogout,
+  exportMyData,
+  mediaUrl,
 } from '../api'
 import { userId, setUserId, currentUser, clearLogin } from '../store/user'
 import { useRouter } from 'vue-router'
@@ -287,7 +294,7 @@ function emptyText() {
         </div>
 
         <div v-if="w.image_path && w.source === 'test'" class="img-card wc-img">
-          <img :src="'/' + w.image_path" alt="错题原图" loading="lazy" />
+          <img :src="mediaUrl(w.image_path)" alt="错题原图" loading="lazy" />
         </div>
         <div class="stem-box">
           <MarkdownView v-if="w.stem" :text="w.stem" />

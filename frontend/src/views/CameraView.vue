@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed } from 'vue'
-import { askQuestion, submitFeedback } from '../api'
+import { askQuestion, submitFeedback, mediaUrl } from '../api'
+import { uploadResumable } from '../utils/upload'
 import { userId } from '../store/user'
 import MarkdownView from '../components/MarkdownView.vue'
 import Icon from '../components/Icon.vue'
@@ -11,6 +12,9 @@ const galleryInput = ref(null)
 const preview = ref('') // 本地预览 URL
 const pickedFile = ref(null)
 const busy = ref(false)
+// 分片上传进度：-1 表示不在上传阶段（用于区分"在上传"和"模型在算"）
+const uploadPct = ref(-1)
+const resumed = ref(false)
 // 已等待秒数：让用户能区分"模型在思考"和"页面卡死了"
 const waited = ref(0)
 let waitTimer = null
@@ -81,10 +85,36 @@ async function doAsk() {
   if (!pickedFile.value) return
   busy.value = true
   error.value = ''
+  resumed.value = false
   startWaiting()
   try {
     const clientId = 'web-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
-    result.value = await askQuestion(pickedFile.value, userId.value, clientId)
+
+    // 先分片上传（支持断点续传），再让模型答疑：
+    // 弱网下 10MB 图一次直传很容易断，断了要整张重来
+    let uploadId = ''
+    try {
+      uploadPct.value = 0
+      uploadId = await uploadResumable(pickedFile.value, {
+        onProgress: (p) => {
+          uploadPct.value = p.percent
+          if (p.resumed) resumed.value = true
+        },
+      })
+    } catch (e) {
+      if (e.name === 'AbortError') throw e
+      // 分片上传失败就退回单次直传：老接口仍然可用，别让用户卡死在上传
+      window.__toast?.('分片上传失败，已改用直传：' + (e.message || '网络异常'))
+    } finally {
+      uploadPct.value = -1
+    }
+
+    result.value = await askQuestion(
+      uploadId ? null : pickedFile.value,
+      userId.value,
+      clientId,
+      uploadId || undefined
+    )
     if (result.value.status === 'failed') {
       error.value = result.value.error_msg || '答疑失败，请重试'
     }
@@ -107,6 +137,8 @@ function reset() {
   custom.value = ''
   error.value = ''
   activeProblem.value = 0
+  uploadPct.value = -1
+  resumed.value = false
 }
 
 function toggle(tag) {
@@ -217,6 +249,7 @@ async function doFeedback(solved = false) {
       <span><Icon name="sun" :size="14" :stroke="1.9" />光线均匀</span>
       <span><Icon name="scan" :size="14" :stroke="1.9" />四角拍全</span>
       <span><Icon name="sparkles" :size="14" :stroke="1.9" />公式也能认</span>
+      <span><Icon name="upload" :size="14" :stroke="1.9" />断网可续传</span>
     </div>
 
     <!-- 加载 -->
@@ -226,8 +259,13 @@ async function doFeedback(solved = false) {
         <div class="card-head-text">
           <div class="card-title">正在读懂这道题</div>
           <div class="card-sub">
-            已等待 {{ waited }} 秒 ·
-            {{ waited >= 90 ? '模型仍在推理，网络慢时会久一些' : '推理型模型通常需要 1~3 分钟' }}
+            <template v-if="uploadPct >= 0">
+              正在上传照片 {{ uploadPct }}%<template v-if="resumed"> · 已续传上次进度</template>
+            </template>
+            <template v-else>
+              已等待 {{ waited }} 秒 ·
+              {{ waited >= 90 ? '模型仍在推理，网络慢时会久一些' : '推理型模型通常需要 1~3 分钟' }}
+            </template>
           </div>
         </div>
       </div>

@@ -1,6 +1,6 @@
 // 全局登录态。登录后 userId 由服务端返回的用户 id 决定（各页面仍按 userId 取数，无需改动）。
 import { ref, watch } from 'vue'
-import { getMe } from '../api'
+import { getMe, clearToken } from '../api'
 
 const KEY = 'spl_user_id'
 const saved = Number(localStorage.getItem(KEY) || 0)
@@ -26,6 +26,8 @@ export function applyLogin(payload) {
 
 export function clearLogin() {
   currentUser.value = null
+  // App 端凭证在 localStorage 里，必须一起清；Web 端清 Cookie 由后端负责
+  clearToken()
 }
 
 /** 启动时探测登录态：带 Cookie 调 /auth/me */

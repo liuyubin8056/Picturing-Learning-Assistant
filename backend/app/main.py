@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import get_settings
 from .db import init_db
 from .middleware import RateLimitMiddleware, RequestContextMiddleware
-from .routers import diagnose, health, kb, profile, questions, tests, tokens
+from .routers import diagnose, health, kb, profile, questions, tests, tokens, uploads
 from .routers import auth as auth_router
 from .storage import get_storage
 
@@ -88,6 +88,7 @@ app.include_router(tests.router)       # E 自测练习
 app.include_router(tests.wb_router)   # F 错题本
 app.include_router(tokens.router)     # token 计量
 app.include_router(auth_router.router)  # 账户（邮箱验证码登录）
+app.include_router(uploads.router)      # 分片上传（断点续传）
 
 # 题目图片静态服务（MVP 本地存储；get_storage 构造时确保目录存在）
 _storage = get_storage()

@@ -1,7 +1,59 @@
 // 后端 API 封装：统一前缀 /api/v1，错误统一抛出带 detail 的 Error。
-// 开发期由 Vite proxy 转发到 FastAPI（见 vite.config.js）。
+//
+// 两种运行形态：
+// - Web：请求同源相对路径，由 Nginx/Vite 转发；登录凭证走 httpOnly Cookie
+// - App（Capacitor）：页面在本地 file/localhost 里，必须指向远程服务器；
+//   原生 WebView 跨域不带 Cookie，所以改用 Authorization: Bearer
 
-const BASE = '/api/v1'
+/* global Capacitor */
+
+const RAW_ORIGIN = (import.meta.env.VITE_API_BASE || '').replace(/\/+$/, '')
+
+// 是否是打包后的 App：构建时注入 VITE_APP_MODE=app，或运行期有 Capacitor 桥
+export const IS_APP =
+  import.meta.env.VITE_APP_MODE === 'app' ||
+  (typeof window !== 'undefined' && !!window.Capacitor?.isNativePlatform?.())
+
+export const API_ORIGIN = RAW_ORIGIN
+const BASE = RAW_ORIGIN + '/api/v1'
+
+/** 拼出完整 API 地址（分片上传需要自己发 PUT 原始字节） */
+export const apiUrl = (p) => BASE + p
+
+const TOKEN_KEY = 'spl_token'
+
+export function getToken() {
+  try {
+    return localStorage.getItem(TOKEN_KEY) || ''
+  } catch {
+    return ''
+  }
+}
+
+function setToken(t) {
+  try {
+    if (t) localStorage.setItem(TOKEN_KEY, t)
+    else localStorage.removeItem(TOKEN_KEY)
+  } catch {
+    /* 隐私模式下 localStorage 不可用，退化为仅 Cookie */
+  }
+}
+
+/** 静态资源（题图 / 上传图）绝对地址：Web 走相对，App 拼服务器源 */
+export function mediaUrl(path) {
+  if (!path) return ''
+  if (/^(https?:|data:|blob:)/.test(path)) return path
+  const p = path.startsWith('/') ? path : '/' + path
+  return RAW_ORIGIN ? RAW_ORIGIN + p : p
+}
+
+/** 统一的鉴权头：App 用它替代 Cookie */
+export function authHeaders(extra = {}) {
+  const h = { 'X-Client': IS_APP ? 'app' : 'web', ...extra }
+  const t = getToken()
+  if (t) h['Authorization'] = `Bearer ${t}`
+  return h
+}
 
 // 普通接口 30 秒；大模型接口单独放宽。
 // 依据：答疑实测 30~90s，慢时 2~3 分钟；Nginx 那边是 300s，
@@ -9,31 +61,49 @@ const BASE = '/api/v1'
 const DEFAULT_TIMEOUT = 30000
 export const LLM_TIMEOUT = 180000
 
-async function request(path, { method = 'GET', body, isForm, timeout = DEFAULT_TIMEOUT } = {}) {
-  const opts = { method, headers: {} }
+/** 暴露给需要自己控制流程的调用方（导出下载、分片上传、图片请求） */
+export async function authFetch(path, { method = 'GET', body, isForm, headers, timeout = DEFAULT_TIMEOUT, fullUrl, signal } = {}) {
+  const h = authHeaders(headers)
+  const opts = { method, headers: h }
   if (body !== undefined) {
-    if (isForm) {
-      opts.body = body // FormData，浏览器自动带 boundary
+    // 二进制与表单必须原样发：Blob 走 JSON.stringify 会变成 "{}"（2 字节），
+    // 分片上传时会报"分片大小不符"，这个坑踩过一次
+    const raw =
+      isForm ||
+      (typeof Blob !== 'undefined' && body instanceof Blob) ||
+      (typeof FormData !== 'undefined' && body instanceof FormData) ||
+      (typeof ArrayBuffer !== 'undefined' &&
+        (body instanceof ArrayBuffer || ArrayBuffer.isView(body)))
+    if (raw) {
+      opts.body = body
     } else {
-      opts.headers['Content-Type'] = 'application/json'
+      h['Content-Type'] = 'application/json'
       opts.body = JSON.stringify(body)
     }
   }
+  // Web 端凭证在 Cookie 里，跨源请求（App 指向服务器）靠 Bearer，不需要 credentials
+  opts.credentials = IS_APP ? 'omit' : 'same-origin'
 
-  // 没有超时的话，网络卡住时用户只会看到一直转圈，分不清"在算"还是"挂了"
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), timeout)
+  // 外部取消（用户退出页面）与超时共用一个 signal
+  if (signal) signal.addEventListener('abort', () => ctrl.abort(), { once: true })
+  try {
+    return await fetch(fullUrl || BASE + path, { ...opts, signal: ctrl.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
+async function request(path, { method = 'GET', body, isForm, timeout = DEFAULT_TIMEOUT } = {}) {
   let res
   try {
-    res = await fetch(BASE + path, { ...opts, signal: ctrl.signal })
+    res = await authFetch(path, { method, body, isForm, timeout })
   } catch (e) {
     if (e.name === 'AbortError') {
       throw new Error(`请求超时（已等待 ${Math.round(timeout / 1000)} 秒），网络较慢或服务繁忙，请稍后重试`)
     }
     throw new Error('网络连接失败，请检查网络后重试')
-  } finally {
-    clearTimeout(timer)
   }
 
   const text = await res.text()
@@ -47,6 +117,7 @@ async function request(path, { method = 'GET', body, isForm, timeout = DEFAULT_T
   if (!res.ok) {
     // 登录态失效：广播事件，由 App.vue 统一跳登录页（避免 api ↔ store 循环依赖）
     if (res.status === 401 && !path.startsWith('/auth/')) {
+      setToken('')
       window.dispatchEvent(new Event('auth:expired'))
     }
     // 限流：后端会带 retry_after，直接告诉用户等多久
@@ -57,7 +128,14 @@ async function request(path, { method = 'GET', body, isForm, timeout = DEFAULT_T
     const msg = data?.detail || data?.message || `请求失败（HTTP ${res.status}）`
     throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg))
   }
+
+  // App 端登录成功会把 token 放在响应体里，这里统一收口存储
+  if (data && typeof data === 'object' && data.token) setToken(data.token)
   return data
+}
+
+export function clearToken() {
+  setToken('')
 }
 
 // ---------- 账户（邮箱验证码登录） ----------
@@ -80,7 +158,7 @@ export const demoLogin = () => request('/auth/demo-login', { method: 'POST' })
 // 导出我的全部数据（JSON 下载）。走 fetch 是因为要带 Cookie，
 // 且失败时能拿到后端的错误说明而不是一个空白页。
 export const exportMyData = async () => {
-  const res = await fetch(BASE + '/auth/export')
+  const res = await authFetch('/auth/export', { timeout: 60000 })
   if (!res.ok) {
     let msg = `导出失败（HTTP ${res.status}）`
     try {
@@ -102,9 +180,11 @@ export const exportMyData = async () => {
 }
 
 // ---------- 答疑 ----------
-export const askQuestion = (file, userId, clientId) => {
+/** 答疑：file 直接上传；传 uploadId 则复用已合并的分片上传结果 */
+export const askQuestion = (file, userId, clientId, uploadId) => {
   const fd = new FormData()
-  fd.append('image', file)
+  if (uploadId) fd.append('image_upload_id', uploadId)
+  else fd.append('image', file)
   fd.append('user_id', String(userId))
   fd.append('client_question_id', clientId)
   return request('/questions', { method: 'POST', body: fd, isForm: true, timeout: LLM_TIMEOUT })

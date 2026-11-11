@@ -1,0 +1,12 @@
+{
+  "appId": "com.learnmate.app",
+  "appName": "智能拍照学习助手",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": true,
+    "backgroundColor": "#f7f8fc"
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}

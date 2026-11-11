@@ -1,0 +1,13 @@
+# 依赖与构建产物
+node_modules/
+dist/
+dist.prev/
+
+# Android 壳：只提交工程配置，产物与本机路径不入库
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+# cap sync 会把 dist 复制到这里，属于生成物
+android/app/src/main/assets/public/

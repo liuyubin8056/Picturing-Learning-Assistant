@@ -21,6 +21,7 @@ from ..deps import current_user, ensure_owner, ensure_self
 from ..llm.deepseek import DeepSeekClient, LLMCallError, LLMNotConfiguredError
 from ..models import Question, User
 from ..schemas import QuestionOut
+from ..services import upload_service as us
 from ..services.question_service import MAX_IMAGE_BYTES, QuestionService
 from ..storage import get_storage
 
@@ -56,21 +57,38 @@ def to_out(q: Question, storage, duplicated: bool = False) -> QuestionOut:
     ),
 )
 async def create_question(
-    image: UploadFile = File(..., description="题目照片"),
+    image: UploadFile | None = File(None, description="题目照片（与 image_upload_id 二选一）"),
+    image_upload_id: str | None = Form(None, description="分片上传完成后的 upload_id"),
     user_id: int = Form(...),
     client_question_id: str = Form(..., description="端侧幂等 ID（UUID）"),
     me: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
     uid = ensure_owner(user_id, me)
-    # 上传体积前置检查（避免先整读超大文件）
-    if image.size is not None and image.size > MAX_IMAGE_BYTES:
-        raise HTTPException(status_code=422, detail="图片超过 10MB 上限")
+    if image is None and not image_upload_id:
+        raise HTTPException(
+            status_code=422, detail="需要提供 image（直接上传）或 image_upload_id（分片上传）"
+        )
 
     storage = get_storage()
     svc = QuestionService(session, storage, DeepSeekClient(get_settings()))
-    ext = Path(image.filename or "").suffix or ".jpg"
-    image_bytes = await image.read()
+
+    if image_upload_id:
+        # 分片上传完成后的文件：直接读合并结果，跳过重复传输
+        up = us.get_owned(session, image_upload_id, uid)
+        if up.status != "completed" or not up.stored_path:
+            raise HTTPException(status_code=422, detail="该上传尚未完成，请先传完所有分片")
+        src = Path(get_settings().upload_path) / up.stored_path
+        if not src.exists():
+            raise HTTPException(status_code=410, detail="上传文件已失效，请重新上传")
+        image_bytes = src.read_bytes()
+        ext = Path(up.filename).suffix.lower() or ".jpg"
+    else:
+        # 上传体积前置检查（避免先整读超大文件）
+        if image.size is not None and image.size > MAX_IMAGE_BYTES:
+            raise HTTPException(status_code=422, detail="图片超过 10MB 上限")
+        ext = Path(image.filename or "").suffix or ".jpg"
+        image_bytes = await image.read()
 
     try:
         question, replay = await svc.submit(

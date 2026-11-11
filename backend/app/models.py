@@ -306,3 +306,28 @@ class TokenUsage(SQLModel, table=True):
     cache_miss_tokens: int = Field(default=0)
     latency_ms: int = Field(default=0)
     created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class UploadSession(SQLModel, table=True):
+    """分片上传会话（断点续传）。
+
+    为什么要落库而不是只放内存：手机端关掉 App、网页刷新后要继续传，
+    必须能从服务端查回"哪些分片已经收到"。分片本身落磁盘，
+    这里只记录索引与元信息，体积极小。
+    """
+
+    __tablename__ = "upload_sessions"
+
+    # 用 uuid hex 做主键：客户端拿它就够，无法枚举他人上传
+    id: str = Field(primary_key=True)
+    user_id: int = Field(index=True)
+    filename: str = ""                       # 仅用于取扩展名，原样不落地
+    content_type: str | None = None
+    total_size: int = 0
+    chunk_size: int = 0
+    total_chunks: int = 0
+    received_json: str = "[]"                # 已收到的分片序号
+    status: str = Field(default="uploading", index=True)  # uploading / completed
+    stored_path: str | None = None            # 合并后的相对路径（/uploads/xxx.jpg 去掉前缀）
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow)

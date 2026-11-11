@@ -1,8 +1,14 @@
 <script setup>
 import { computed, nextTick, onMounted, ref } from 'vue'
 import {
-  createTest, submitTest, detailedSolution, listTests,
-  explainQuestion, judgeQuestionImage, getUnlockStatus,
+  createTest,
+  submitTest,
+  detailedSolution,
+  listTests,
+  explainQuestion,
+  judgeQuestionImage,
+  getUnlockStatus,
+  mediaUrl,
 } from '../api'
 import { userId } from '../store/user'
 import MarkdownView from '../components/MarkdownView.vue'
@@ -77,7 +83,7 @@ function toggleStemImage(qid) {
 // 原题图放大：题干切图多为 684px 宽的窄条，缩到手机宽度后字偏小，点一下看大图
 const zoomSrc = ref('')
 function openZoom(q) {
-  zoomSrc.value = '/' + (q.stem_image_path || q.image_path)
+  zoomSrc.value = mediaUrl(q.stem_image_path || q.image_path)
 }
 
 function pickJudgeFile(q) {
@@ -462,7 +468,7 @@ const judgeOf = (qid) => (judgeResult.value?.detail || []).find((d) => d.questio
           </button>
         </div>
         <div v-if="hasStemImage(q) && isStemImageOpen(q)" class="img-card q-img expanded" @click="openZoom(q)">
-          <img :src="'/' + (q.stem_image_path || q.image_path)" alt="题目原图" loading="lazy" />
+          <img :src="mediaUrl(q.stem_image_path || q.image_path)" alt="题目原图" loading="lazy" />
         </div>
 
         <!-- 客观题 -->
@@ -643,7 +649,7 @@ const judgeOf = (qid) => (judgeResult.value?.detail || []).find((d) => d.questio
             </summary>
             <div class="sol-body">
               <div v-if="q.solution_image_path" class="img-card" style="margin-bottom: 8px">
-                <img :src="'/' + q.solution_image_path" alt="解析图" />
+                <img :src="mediaUrl(q.solution_image_path)" alt="解析图" />
               </div>
               <div class="answer">
                 <MarkdownView :text="q.solution || '（无）'" />
