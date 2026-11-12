@@ -4,9 +4,9 @@
 唯一新增的是 api_hits（登录用户每请求一次 +1，内存累加到点落库）。
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, func, select
 
 from ..db import get_session
@@ -220,23 +220,47 @@ def overview(
 def timeline(
     me: User = Depends(require_admin),
     session: Session = Depends(get_session),
-    days: int = Query(30, ge=1, le=180, description="往前看多少天（含今天）"),
+    days: int = Query(30, ge=1, le=366, description="往前看多少天（含今天）；start/end 优先"),
+    start: str | None = Query(None, description="自定义起始日 YYYY-MM-DD"),
+    end: str | None = Query(None, description="自定义结束日 YYYY-MM-DD（含）"),
     user_id: int | None = Query(None, description="只看某个用户；不传则全站"),
 ):
     """返回连续日期的序列，**缺数据的日子补 0**。
 
     补 0 很关键：折线图不能因为中间某天没人用就把两点连成一条斜线，
     那样看不出"停了一天"，量级也会被误读。
+
+    区间两种给法：`days=N`（最近 N 天）或 `start`+`end`（任意区间，
+    用于「今天 / 昨天 / 本月 / 上月 / 自定义」这些不是"最近 N 天"的选项）。
     """
     usage_counter.flush(session)
 
     TZ = usage_counter.TZ_CN
     today = datetime.now(TZ).date()
-    start = today - timedelta(days=days - 1)
-    start_day = start.isoformat()
+
+    if start or end:
+        if not (start and end):
+            raise HTTPException(400, "自定义区间需要同时提供 start 与 end")
+        try:
+            start_date = date.fromisoformat(start)
+            end_date = date.fromisoformat(end)
+        except ValueError as exc:
+            raise HTTPException(400, "日期格式应为 YYYY-MM-DD") from exc
+        if end_date < start_date:
+            raise HTTPException(400, "结束日期不能早于开始日期")
+        if (end_date - start_date).days + 1 > 366:
+            raise HTTPException(400, "区间最长 366 天")
+    else:
+        end_date = today
+        start_date = today - timedelta(days=days - 1)
+
+    days = (end_date - start_date).days + 1
+    start_day = start_date.isoformat()
 
     # 1) 接口访问：本来就按天存，直接 group by
-    stmt = select(ApiHit.day, func.sum(ApiHit.count)).where(ApiHit.day >= start_day)
+    stmt = select(ApiHit.day, func.sum(ApiHit.count)).where(
+        ApiHit.day >= start_day, ApiHit.day <= end_date.isoformat()
+    )
     if user_id is not None:
         stmt = stmt.where(ApiHit.user_id == user_id)
     api_by_day = {
@@ -244,9 +268,12 @@ def timeline(
     }
 
     # 2) Token 用量：按 created_at 归到北京时间的那一天
-    #    库里的值是 UTC（SQLite 存成无偏移字符串），下界取"北京开始日 0 点"对应的 UTC 时刻
+    #    库里的值是 UTC（SQLite 存成无偏移字符串），下界取"开始日 0 点"对应的 UTC 时刻
     since_utc = datetime.combine(
-        start, datetime.min.time(), tzinfo=TZ
+        start_date, datetime.min.time(), tzinfo=TZ
+    ).astimezone(timezone.utc)
+    until_utc = datetime.combine(
+        end_date + timedelta(days=1), datetime.min.time(), tzinfo=TZ
     ).astimezone(timezone.utc)
     tstmt = select(
         TokenUsage.created_at,
@@ -254,7 +281,7 @@ def timeline(
         TokenUsage.prompt_tokens,
         TokenUsage.completion_tokens,
         TokenUsage.total_tokens,
-    ).where(TokenUsage.created_at >= since_utc)
+    ).where(TokenUsage.created_at >= since_utc, TokenUsage.created_at < until_utc)
     if user_id is not None:
         tstmt = tstmt.where(TokenUsage.user_id == user_id)
 
@@ -279,7 +306,7 @@ def timeline(
 
     series = []
     for i in range(days):
-        d = (start + timedelta(days=i)).isoformat()
+        d = (start_date + timedelta(days=i)).isoformat()
         cell = llm_by_day.get(d, {"calls": 0, "prompt": 0, "completion": 0, "total": 0})
         series.append(
             {
@@ -319,7 +346,7 @@ def timeline(
         "days": days,
         "user_id": user_id,
         "start": start_day,
-        "end": today.isoformat(),
+        "end": end_date.isoformat(),
         "timezone": "UTC+8",
         "series": series,
         "scenes": scenes,

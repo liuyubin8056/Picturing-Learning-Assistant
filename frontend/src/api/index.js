@@ -207,9 +207,18 @@ export const importMyData = (mode, data) =>
 // ---------- 管理后台 ----------
 export const adminUsers = () => request('/admin/users')
 export const adminOverview = () => request('/admin/overview')
-/** 时间轴：按天的 API 调用量与 Token 用量。userId 为空表示全站 */
-export const adminTimeline = ({ days = 30, userId = null } = {}) => {
-  const qs = new URLSearchParams({ days: String(days) })
+/** 时间轴：按天的 API 调用量与 Token 用量。
+ *  - days=N：最近 N 天（含今天）
+ *  - start/end：任意区间（今天 / 昨天 / 本月 / 上月 / 自定义用这个）
+ *  - userId 为空表示全站 */
+export const adminTimeline = ({ days = 30, start = null, end = null, userId = null } = {}) => {
+  const qs = new URLSearchParams()
+  if (start && end) {
+    qs.set('start', start)
+    qs.set('end', end)
+  } else {
+    qs.set('days', String(days))
+  }
   if (userId != null) qs.set('user_id', String(userId))
   return request(`/admin/timeline?${qs.toString()}`)
 }

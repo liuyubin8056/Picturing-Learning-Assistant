@@ -236,3 +236,43 @@ def test_timeline_aggregates_token_usage_by_local_day(client: TestClient):
             if obj:
                 s.delete(obj)
                 s.commit()
+
+
+def test_timeline_accepts_explicit_range(client: TestClient):
+    """今天 / 昨天 / 本月 / 上月这些选项都不是"最近 N 天"，必须能传任意区间。"""
+    _as(client, is_admin=True)
+    r = client.get(
+        "/api/v1/admin/timeline", params={"start": "2026-11-01", "end": "2026-11-03"}
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["start"] == "2026-11-01"
+    assert body["end"] == "2026-11-03"
+    assert [row["day"] for row in body["series"]] == [
+        "2026-11-01",
+        "2026-11-02",
+        "2026-11-03",
+    ]
+
+
+def test_timeline_single_day_range(client: TestClient):
+    """选「今天」只有一天，也要正常返回一个点而不是报错。"""
+    _as(client, is_admin=True)
+    r = client.get(
+        "/api/v1/admin/timeline", params={"start": "2026-11-12", "end": "2026-11-12"}
+    )
+    assert r.status_code == 200, r.text
+    assert len(r.json()["series"]) == 1
+
+
+def test_timeline_rejects_bad_range(client: TestClient):
+    _as(client, is_admin=True)
+    assert client.get(
+        "/api/v1/admin/timeline", params={"start": "2026-11-05", "end": "2026-11-01"}
+    ).status_code == 400
+    assert client.get(
+        "/api/v1/admin/timeline", params={"start": "2026/11/01", "end": "2026-11-03"}
+    ).status_code == 400
+    assert client.get(
+        "/api/v1/admin/timeline", params={"start": "2026-11-01"}
+    ).status_code == 400

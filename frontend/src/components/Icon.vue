@@ -99,6 +99,8 @@ const ICONS = {
   plus: { paths: ['M12 5v14', 'M5 12h14'] },
   x: { paths: ['M18 6 6 18', 'M6 6l12 12'] },
   search: { paths: ['m21 21-4.6-4.6'], circles: [[10.8, 10.8, 7.2]] },
+  'chevron-down': { paths: ['m6 9 6 6 6-6'] },
+  calendar: { paths: ['M4 6.5h16v14H4z', 'M8 3v4', 'M16 3v4', 'M4 11h16'] },
 }
 
 const icon = computed(() => ICONS[props.name] || ICONS.sparkles)

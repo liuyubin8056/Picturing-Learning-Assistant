@@ -143,13 +143,18 @@ const gradId = `trend-grad-${Math.random().toString(36).slice(2, 8)}`
         :x="t.x"
         :y="height - 6"
         class="axis"
-        :text-anchor="t.i === 0 ? 'start' : t.i === points.length - 1 ? 'end' : 'middle'"
+        :text-anchor="
+          points.length === 1 ? 'middle' : t.i === 0 ? 'start' : t.i === points.length - 1 ? 'end' : 'middle'
+        "
       >
         {{ md(t.day) }}
       </text>
 
       <path :d="areaPath" :fill="`url(#${gradId})`" />
       <path :d="linePath" fill="none" :stroke="color" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+
+      <!-- 只选了一天时没有线段可画，落一个点，否则图表看起来是空的 -->
+      <circle v-if="points.length === 1" :cx="xAt(0)" :cy="yAt(vals[0])" r="4" :fill="color" />
 
       <!-- 悬浮：竖线 + 圆点 -->
       <g v-if="hoverPoint">

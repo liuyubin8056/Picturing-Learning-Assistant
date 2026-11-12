@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   sendEmailCode,
   loginByCode,
@@ -107,6 +107,103 @@ async function enterDemo() {
   }
 }
 
+// ---------- 时间范围 ----------
+// 「今天 / 昨天 / 本月 / 上月」都不是"最近 N 天"，所以不能只传 days，
+// 统一在前端换算成 start/end 再发给后端。
+const RANGES = [
+  { key: 'today', label: '今天' },
+  { key: 'yesterday', label: '昨天' },
+  { key: 'd7', label: '近 7 天' },
+  { key: 'd30', label: '近 30 天' },
+  { key: 'this_month', label: '本月' },
+  { key: 'last_month', label: '上月' },
+  { key: 'custom', label: '自定义' },
+]
+
+const pad2 = (n) => String(n).padStart(2, '0')
+const ymd = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+const todayStr = ymd(new Date())
+
+const rangeKey = ref('d30')
+const customStart = ref('')
+const customEnd = ref('')
+const menuOpen = ref(false)
+const rangeRef = ref(null)
+
+function shiftDays(n) {
+  const d = new Date()
+  d.setDate(d.getDate() + n)
+  return d
+}
+
+const range = computed(() => {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = now.getMonth()
+  let start
+  let end
+  switch (rangeKey.value) {
+    case 'today':
+      start = end = todayStr
+      break
+    case 'yesterday': {
+      const d = ymd(shiftDays(-1))
+      start = end = d
+      break
+    }
+    case 'd7':
+      start = ymd(shiftDays(-6))
+      end = todayStr
+      break
+    case 'this_month':
+      start = ymd(new Date(y, m, 1))
+      end = todayStr
+      break
+    case 'last_month':
+      start = ymd(new Date(y, m - 1, 1))
+      end = ymd(new Date(y, m, 0))     // 上月最后一天
+      break
+    case 'custom':
+      start = customStart.value || ymd(shiftDays(-6))
+      end = customEnd.value || todayStr
+      break
+    default:
+      start = ymd(shiftDays(-29))
+      end = todayStr
+  }
+  if (end < start) [start, end] = [end, start]
+  const days = Math.round((new Date(end) - new Date(start)) / 86400000) + 1
+  return { start, end, days }
+})
+
+const rangeLabel = computed(() => {
+  const r = RANGES.find((x) => x.key === rangeKey.value)
+  if (rangeKey.value === 'custom' && customStart.value && customEnd.value) {
+    return `${range.value.start.slice(5)} ~ ${range.value.end.slice(5)}`
+  }
+  return r?.label || '近 30 天'
+})
+
+function pickRange(key) {
+  rangeKey.value = key
+  if (key === 'custom') {
+    if (!customStart.value) {
+      customStart.value = ymd(shiftDays(-6))
+      customEnd.value = todayStr
+    }
+    return                       // 自定义先留在菜单里让用户选日期
+  }
+  menuOpen.value = false
+}
+
+// 点空白处收起菜单（原生 select 没法定制样式，只能自己做）
+function onDocClick(e) {
+  if (!menuOpen.value) return
+  if (rangeRef.value && !rangeRef.value.contains(e.target)) menuOpen.value = false
+}
+onMounted(() => document.addEventListener('mousedown', onDocClick))
+onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
+
 // ---------- 数据 ----------
 const loading = ref(false)
 const users = ref([])
@@ -114,7 +211,6 @@ const overview = ref(null)
 
 const timeline = ref(null)
 const tlLoading = ref(false)
-const tlDays = ref(30)
 const tlUserId = ref(null)          // null = 全站；点某一行后只看这个人
 
 async function loadAll() {
@@ -134,7 +230,11 @@ async function loadAll() {
 async function loadTimeline() {
   tlLoading.value = true
   try {
-    timeline.value = await adminTimeline({ days: tlDays.value, userId: tlUserId.value })
+    timeline.value = await adminTimeline({
+      start: range.value.start,
+      end: range.value.end,
+      userId: tlUserId.value,
+    })
   } catch (e) {
     error.value = e.message || '时间轴加载失败'
   } finally {
@@ -142,8 +242,11 @@ async function loadTimeline() {
   }
 }
 
-// 切换范围 / 切换查看对象时只重取时间轴，不动用户列表
-watch([tlDays, tlUserId], loadTimeline)
+// 换区间 / 换查看对象时只重取时间轴，不动用户列表
+watch(
+  () => `${range.value.start}|${range.value.end}|${tlUserId.value}`,
+  loadTimeline
+)
 
 const tlSeries = computed(() => timeline.value?.series || [])
 const apiPoints = computed(() => tlSeries.value.map((r) => ({ day: r.day, value: r.api_hits })))
@@ -391,16 +494,34 @@ onMounted(async () => {
               {{ timeline?.start }} ~ {{ timeline?.end }} · 按北京时间（UTC+8）自然日统计
             </small>
           </div>
-          <div class="adm-range">
-            <button
-              v-for="d in [7, 14, 30, 90]"
-              :key="d"
-              class="seg-btn"
-              :class="{ on: tlDays === d }"
-              @click="tlDays = d"
-            >
-              {{ d }} 天
+          <div ref="rangeRef" class="rangepick">
+            <button class="range-btn" :class="{ open: menuOpen }" @click="menuOpen = !menuOpen">
+              <Icon name="calendar" :size="14" :stroke="1.9" />
+              <span class="rb-k">时间维度</span>
+              <i class="rb-sep"></i>
+              <span class="rb-v">{{ rangeLabel }}</span>
+              <Icon name="chevron-down" :size="14" :stroke="2.2" class="rb-caret" :class="{ up: menuOpen }" />
             </button>
+
+            <div v-if="menuOpen" class="range-menu">
+              <button
+                v-for="r in RANGES"
+                :key="r.key"
+                class="range-item"
+                :class="{ on: rangeKey === r.key }"
+                @click="pickRange(r.key)"
+              >
+                <span>{{ r.label }}</span>
+                <Icon v-if="rangeKey === r.key" name="check" :size="13" :stroke="2.6" />
+              </button>
+
+              <div v-if="rangeKey === 'custom'" class="range-custom">
+                <input v-model="customStart" type="date" :max="customEnd || todayStr" aria-label="开始日期" />
+                <span class="rc-sep">至</span>
+                <input v-model="customEnd" type="date" :min="customStart" :max="todayStr" aria-label="结束日期" />
+                <button class="btn sm primary" @click="menuOpen = false">应用</button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -421,8 +542,8 @@ onMounted(async () => {
             <TrendChart :points="apiPoints" color="#4c6fff" :height="150" unit=" 次" />
             <div class="chart-foot">
               峰值 {{ timeline?.peak?.api_hits?.value ?? 0 }} 次 · {{ timeline?.peak?.api_hits?.day || '—' }}
-              <span v-if="activeDays < tlDays" class="chart-note">
-                （{{ tlDays }} 天里只有 {{ activeDays }} 天有量）
+              <span v-if="activeDays < tlSeries.length" class="chart-note">
+                （{{ tlSeries.length }} 天里只有 {{ activeDays }} 天有量）
               </span>
             </div>
           </div>
@@ -684,6 +805,124 @@ onMounted(async () => {
   border-radius: 10px;
   background: var(--card-2);
   border: 1px solid var(--line);
+}
+
+/* ---------- 时间维度下拉 ---------- */
+.rangepick {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.range-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 11px;
+  border-radius: 11px;
+  border: 1px solid var(--line);
+  background: var(--card-2);
+  color: var(--ink);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: border-color 0.15s var(--ease), background 0.15s var(--ease);
+}
+
+.range-btn:hover,
+.range-btn.open {
+  border-color: var(--brand-ring);
+  background: var(--card);
+}
+
+.rb-k {
+  color: var(--ink-3);
+}
+
+.rb-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--line);
+}
+
+.rb-v {
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.rb-caret {
+  color: var(--ink-3);
+  transition: transform 0.18s var(--ease);
+}
+
+.rb-caret.up {
+  transform: rotate(180deg);
+}
+
+.range-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  width: 214px;
+  padding: 6px;
+  border-radius: 14px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-lg);
+}
+
+.range-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 36px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.range-item:hover {
+  background: var(--card-2);
+  color: var(--ink);
+}
+
+.range-item.on {
+  background: var(--brand-weak);
+  color: var(--brand-ink);
+  font-weight: 600;
+}
+
+.range-custom {
+  display: grid;
+  gap: 6px;
+  margin: 6px 4px 2px;
+  padding: 9px 8px;
+  border-radius: 10px;
+  background: var(--card-2);
+  border: 1px solid var(--line);
+}
+
+.range-custom input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  font-size: 12px;
+  padding: 6px 8px;
+}
+
+.rc-sep {
+  font-size: 11px;
+  color: var(--ink-3);
+  text-align: center;
+  line-height: 1;
 }
 
 .seg-btn {
