@@ -33,15 +33,17 @@ onBeforeUnmount(() => ro?.disconnect())
 const vals = computed(() => props.points.map((p) => Number(p[props.valueKey] ?? 0)))
 
 // Y 轴顶端取"好看的整数"：直接 max*1.18 会得到 304 / 203 / 101 这种刻度，
-// 读数时要在脑子里换算，很别扭。这里把刻度步长吸到 1/2/5×10^n，再乘 3 段。
+// 读数时要在脑子里换算，很别扭。这里把刻度步长吸到 1/2/5×10^n。
+// 分 4 段而不是 3 段：3 段时峰值 61 会顶到 150，曲线只占 40% 高，看着像条死线。
+const SEGMENTS = 4
 const maxV = computed(() => {
   const m = Math.max(0, ...vals.value)
   if (m <= 0) return 1
-  const rough = (m * 1.05) / 3
+  const rough = (m * 1.05) / SEGMENTS
   const mag = Math.pow(10, Math.floor(Math.log10(rough)))
   const norm = rough / mag
   const step = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag
-  return step * 3
+  return step * SEGMENTS
 })
 const innerW = computed(() => Math.max(40, width.value - PAD.l - PAD.r))
 const innerH = computed(() => Math.max(30, props.height - PAD.t - PAD.b))
@@ -66,8 +68,8 @@ const areaPath = computed(() => {
 })
 
 const yTicks = computed(() =>
-  Array.from({ length: 4 }, (_, i) => {
-    const v = (maxV.value * i) / 3
+  Array.from({ length: SEGMENTS + 1 }, (_, i) => {
+    const v = (maxV.value * i) / SEGMENTS
     return { v, y: yAt(v) }
   })
 )

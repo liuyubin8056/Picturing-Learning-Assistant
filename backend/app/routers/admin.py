@@ -122,6 +122,8 @@ def list_users(
                 "email": u.email,
                 "email_masked": auth.mask_email(u.email) if u.email else None,
                 "has_email": bool(u.email),
+                # 早期未绑定邮箱的空壳账号：昵称和邮箱都没有，界面上不能显示成"用户0"
+                "anonymous": not (u.nickname or u.email),
                 "is_demo": bool(u.is_demo),
                 "is_admin": bool(u.is_admin),
                 "status": u.status,

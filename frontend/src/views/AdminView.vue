@@ -150,6 +150,9 @@ const apiPoints = computed(() => tlSeries.value.map((r) => ({ day: r.day, value:
 const tokenPoints = computed(() => tlSeries.value.map((r) => ({ day: r.day, value: r.tokens_total })))
 const tlTotals = computed(() => timeline.value?.totals || {})
 const tlScenes = computed(() => timeline.value?.scenes || [])
+// 项目早期用量稀疏时，图上几乎是一条平线，容易被误读成"坏了"。
+// 明确告诉用户「30 天里只有 3 天有量」比让他自己猜要友好。
+const activeDays = computed(() => tlSeries.value.filter((r) => r.api_hits > 0 || r.tokens_total > 0).length)
 
 const scopeUser = computed(() => users.value.find((u) => u.id === tlUserId.value) || null)
 
@@ -418,6 +421,9 @@ onMounted(async () => {
             <TrendChart :points="apiPoints" color="#4c6fff" :height="150" unit=" 次" />
             <div class="chart-foot">
               峰值 {{ timeline?.peak?.api_hits?.value ?? 0 }} 次 · {{ timeline?.peak?.api_hits?.day || '—' }}
+              <span v-if="activeDays < tlDays" class="chart-note">
+                （{{ tlDays }} 天里只有 {{ activeDays }} 天有量）
+              </span>
             </div>
           </div>
 
@@ -508,9 +514,10 @@ onMounted(async () => {
                 @click="focusUser(u)"
               >
                 <td class="who">
-                  <b>{{ u.nickname }}</b>
+                  <b>{{ u.anonymous ? '影子账号' : u.nickname }}</b>
                   <span class="tag" v-if="u.is_admin">管理员</span>
                   <span class="tag" v-if="u.is_demo">演示</span>
+                  <span class="tag" v-if="u.anonymous">无邮箱</span>
                   <small>ID {{ u.id }}</small>
                 </td>
                 <td class="mail">{{ u.email || '（未绑定）' }}</td>
@@ -773,6 +780,10 @@ onMounted(async () => {
   font-size: 11px;
   color: var(--ink-3);
   margin-top: 2px;
+}
+
+.chart-note {
+  color: var(--warn-ink);
 }
 
 /* ---------- 场景拆分 ---------- */
