@@ -12,6 +12,7 @@ import {
 } from '../api'
 import { userId } from '../store/user'
 import MarkdownView from '../components/MarkdownView.vue'
+import InlineText from '../components/InlineText.vue'
 import Icon from '../components/Icon.vue'
 
 // 看解析还不懂时的困惑类型（与后端 CONFUSION_LABELS 对应）
@@ -411,7 +412,7 @@ const judgeOf = (qid) => (judgeResult.value?.detail || []).find((d) => d.questio
           <div v-for="h in history.slice(0, 5)" :key="h.id" class="hist-row">
             <span class="hist-dot" :class="h.status === 'submitted' ? 'ok' : 'warn'"></span>
             <div class="hist-main">
-              <b>{{ h.title }}</b>
+              <b><InlineText :text="h.title" /></b>
               <span v-if="h.status === 'submitted' && h.score != null" class="num">
                 答对 {{ h.right }}/{{ h.right + h.wrong }} · 得分 {{ Math.round(h.score * 100) }}%
               </span>
@@ -537,9 +538,9 @@ const judgeOf = (qid) => (judgeResult.value?.detail || []).find((d) => d.questio
                 </span>
               </div>
               <div v-if="judgeRes[q.id].student_answer" class="judge-answer">
-                识别到你的答案：<b>{{ judgeRes[q.id].student_answer }}</b>
+                识别到你的答案：<b><InlineText :text="judgeRes[q.id].student_answer" /></b>
               </div>
-              <div v-if="judgeRes[q.id].reason" class="judge-reason">{{ judgeRes[q.id].reason }}</div>
+              <div v-if="judgeRes[q.id].reason" class="judge-reason"><InlineText :text="judgeRes[q.id].reason" /></div>
             </div>
 
             <div class="self-row">
@@ -633,7 +634,7 @@ const judgeOf = (qid) => (judgeResult.value?.detail || []).find((d) => d.questio
           <div class="compare">
             <div v-if="judgeOf(q.id).your_answer != null" class="cmp-row">
               <span class="cmp-k">你的答案</span>
-              <div class="cmp-v" :class="judgeOf(q.id).correct ? 'ok' : 'err'">{{ judgeOf(q.id).your_answer }}</div>
+              <div class="cmp-v" :class="judgeOf(q.id).correct ? 'ok' : 'err'"><InlineText :text="judgeOf(q.id).your_answer" /></div>
             </div>
             <div class="cmp-row">
               <span class="cmp-k">正确答案</span>
@@ -711,7 +712,7 @@ const judgeOf = (qid) => (judgeResult.value?.detail || []).find((d) => d.questio
                       :key="o.tag"
                       class="chip"
                       @click="followupAsk(q, o)"
-                    >{{ o.label }}</button>
+                    ><InlineText :text="o.label" /></button>
                   </div>
                 </div>
               </div>

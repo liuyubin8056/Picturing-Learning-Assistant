@@ -165,3 +165,74 @@ def test_import_rejects_bad_schema(client: TestClient):
         json={"mode": "merge", "data": {"schema_version": 99}},
     )
     assert r.status_code == 422
+
+
+def test_timeline_blocked_for_normal_user(client: TestClient):
+    _as(client, is_admin=False)
+    assert client.get("/api/v1/admin/timeline").status_code == 403
+
+
+def test_timeline_fills_missing_days(client: TestClient):
+    """缺数据的日子必须补 0，否则折线图会把"没人用的一天"连成斜线。"""
+    _as(client, is_admin=True)
+    r = client.get("/api/v1/admin/timeline", params={"days": 7})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert len(body["series"]) == 7
+    days = [row["day"] for row in body["series"]]
+    assert days == sorted(days)
+    assert len(set(days)) == 7
+    # 今天必然在序列末尾
+    from app.services import usage_counter
+
+    assert days[-1] == usage_counter.today_str()
+    for row in body["series"]:
+        for key in ("api_hits", "llm_calls", "tokens_prompt", "tokens_completion", "tokens_total"):
+            assert key in row and row[key] >= 0
+
+
+def test_timeline_aggregates_token_usage_by_local_day(client: TestClient):
+    """UTC 23:30 的调用属于北京时间的第二天，不能被算到前一天。"""
+    from datetime import datetime, timezone
+
+    from sqlmodel import Session
+
+    from app.db import engine
+    from app.models import TokenUsage
+    from app.services import usage_counter
+
+    now_cn = datetime.now(usage_counter.TZ_CN)
+    created_utc = now_cn.astimezone(timezone.utc)
+
+    with Session(engine) as s:
+        row = TokenUsage(
+            user_id=999001,
+            scene="timeline_test",
+            prompt_tokens=1000,
+            completion_tokens=234,
+            total_tokens=1234,
+            created_at=created_utc,
+        )
+        s.add(row)
+        s.commit()
+        rid = row.id
+
+    try:
+        _as(client, is_admin=True)
+        r = client.get(
+            "/api/v1/admin/timeline", params={"days": 2, "user_id": 999001}
+        )
+        assert r.status_code == 200, r.text
+        series = r.json()["series"]
+        today = usage_counter.today_str()
+        hit = [row for row in series if row["day"] == today][0]
+        assert hit["tokens_total"] == 1234
+        assert hit["tokens_prompt"] == 1000
+        assert hit["llm_calls"] == 1
+        assert r.json()["totals"]["tokens_total"] == 1234
+    finally:
+        with Session(engine) as s:
+            obj = s.get(TokenUsage, rid)
+            if obj:
+                s.delete(obj)
+                s.commit()

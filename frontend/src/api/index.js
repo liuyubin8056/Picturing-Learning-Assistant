@@ -207,6 +207,12 @@ export const importMyData = (mode, data) =>
 // ---------- 管理后台 ----------
 export const adminUsers = () => request('/admin/users')
 export const adminOverview = () => request('/admin/overview')
+/** 时间轴：按天的 API 调用量与 Token 用量。userId 为空表示全站 */
+export const adminTimeline = ({ days = 30, userId = null } = {}) => {
+  const qs = new URLSearchParams({ days: String(days) })
+  if (userId != null) qs.set('user_id', String(userId))
+  return request(`/admin/timeline?${qs.toString()}`)
+}
 
 // ---------- 答疑 ----------
 /** 答疑：file 直接上传；传 uploadId 则复用已合并的分片上传结果 */

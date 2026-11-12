@@ -178,3 +178,25 @@ export function renderMarkdown(md) {
   // 占位符可能被包在 <p>/<li> 内，全局替换即可
   return html.replace(/\u0000MATH(\d+)\u0000/g, (_, idx) => rendered[Number(idx)] ?? '')
 }
+
+/**
+ * 行内渲染：给「短文本」用（反馈选项、判分理由、题号标题、标签等）。
+ *
+ * 与 renderMarkdown 的区别只有一点：**不生成块级结构**（不包 <p>），
+ * 因为这层文本常常要塞进 flex 布局的 span / button 里，套一个 <p> 会撑破行。
+ * 公式、**加粗**、`代码`、换行照样处理。
+ *
+ * 典型问题：反馈候选里模型输出了 `$t=x^2+y^2$ ...`，直接插值就会把源码
+ * 原样显示在按钮上——这个函数就是为它准备的。
+ */
+export function renderInline(text) {
+  if (!text) return ''
+  const { text: body, store } = extractMath(softBreaks(normalizeTex(String(text))))
+  const html = esc(body)
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\n/g, '<br/>')
+  if (!store.length) return html
+  const rendered = renderMath(store)
+  return html.replace(/\u0000MATH(\d+)\u0000/g, (_, idx) => rendered[Number(idx)] ?? '')
+}

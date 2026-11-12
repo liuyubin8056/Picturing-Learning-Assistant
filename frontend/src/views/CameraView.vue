@@ -4,6 +4,7 @@ import { askQuestion, submitFeedback, mediaUrl } from '../api'
 import { uploadResumable } from '../utils/upload'
 import { userId } from '../store/user'
 import MarkdownView from '../components/MarkdownView.vue'
+import InlineText from '../components/InlineText.vue'
 import Icon from '../components/Icon.vue'
 
 // 两个独立入口：带 capture 的直接唤起相机，不带的走系统相册选择
@@ -338,7 +339,7 @@ async function doFeedback(solved = false) {
             :class="{ on: activeProblem === i }"
             @click="activeProblem = i"
           >
-            第 {{ p.no || i + 1 }} 题<template v-if="p.title"><span class="pt">· {{ p.title }}</span></template>
+            第 {{ p.no || i + 1 }} 题<template v-if="p.title"><span class="pt">· <InlineText :text="p.title" /></span></template>
           </button>
         </div>
 
@@ -382,7 +383,7 @@ async function doFeedback(solved = false) {
                 @change="toggle(o.tag)"
               />
               <span class="k"><Icon v-if="selected.includes(o.tag)" name="check" :size="13" :stroke="2.8" /></span>
-              <span class="opt-title">{{ o.label }}</span>
+              <span class="opt-title"><InlineText :text="o.label" /></span>
             </label>
           </div>
           <p v-else class="muted drop-note">本题未生成候选选项，可以直接在下方描述。</p>

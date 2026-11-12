@@ -4,6 +4,7 @@ import { getProfile, generateDiagnose, getLatestDiagnose, listDiagnose, getRadar
 import { userId } from '../store/user'
 import RadarChart from '../components/RadarChart.vue'
 import MarkdownView from '../components/MarkdownView.vue'
+import InlineText from '../components/InlineText.vue'
 import Icon from '../components/Icon.vue'
 
 const loading = ref(true)
@@ -340,10 +341,12 @@ function scoreColor(v) {
                 <span class="ev-dot" :class="ev.type"></span>
                 <span class="ev-text">
                   <template v-if="ev.type === 'test'">
-                    自测做错：{{ (ev.stem || '').slice(0, 46) }}（你答 {{ ev.user_answer ?? '—' }}，正确 {{ ev.correct_answer }}）
+                    自测做错：<InlineText :text="(ev.stem || '').slice(0, 46)" />（你答
+                    <InlineText :text="ev.user_answer ?? '—'" />，正确
+                    <InlineText :text="ev.correct_answer" />）
                   </template>
                   <template v-else-if="ev.type === 'qa'">
-                    答疑反馈：{{ (ev.feedback?.selected || []).join('、') || '自定义描述' }}
+                    答疑反馈：<InlineText :text="(ev.feedback?.selected || []).join('、') || '自定义描述'" />
                   </template>
                   <template v-else>该知识点暂无具体证据（样本不足）</template>
                 </span>

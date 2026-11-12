@@ -6,18 +6,28 @@
 
 import threading
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlmodel import Session, select
 
 from ..models import ApiHit
 
+# 「今天」按北京时间算：UTC 日界会让早上 8 点前的访问记到前一天，
+# 管理后台的时间轴就会整体左移一格，看起来像"今天没数据"。
+TZ_CN = timezone(timedelta(hours=8))
+
 _lock = threading.Lock()
 _hits: Counter[tuple[int, str]] = Counter()
 
 
+def today_str() -> str:
+    """北京时间今天的 YYYY-MM-DD（与 ApiHit.day 的写入口径保持一致）。"""
+    return datetime.now(TZ_CN).strftime("%Y-%m-%d")
+
+
 def _today() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return today_str()
+
 
 
 def hit(user_id: int | None) -> None:
